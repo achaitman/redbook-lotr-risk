@@ -76,8 +76,17 @@ const pick = (g, v) => click([...grids()[g].querySelectorAll("button")][v - 1]);
 pick(0, 6); await wait(40); pick(1, 4); await wait(40); pick(2, 1); await wait(40);
 pick(3, 5); await wait(40); pick(4, 4); await wait(40);
 click(find("Defending a stronghold")); await wait(60);
-click(find("Settle the battle")); await wait(150);
+click(find("Settle my dice")); await wait(150);
 check("battle: sorted highest-vs-highest with stronghold bonus", body().includes("Attacker removes 2"));
+
+// Fight!: rolls all dice, animates, then the verdict waits for Done and lands in the result panel
+click(find("Fight!")); await wait(300);
+check("fight: stage opens with tumbling dice", body().includes("The dice are cast"));
+await wait(4200);
+check("fight: verdict shows with a Done button", body().includes("The battle is decided") && body().includes("removes") && !!doc().querySelector(".rb-backdrop"));
+click([...doc().querySelectorAll(".rb-backdrop button")].find((b) => b.textContent.trim() === "Done")); await wait(150);
+check("fight: result lands in the panel", !doc().querySelector(".rb-backdrop") && body().includes("off the board"));
+click(find("clear")); await wait(80);
 
 // Conquer Moria by tapping it on the board; undo works; then take it again
 click(find("I conquered a land")); await wait(120);

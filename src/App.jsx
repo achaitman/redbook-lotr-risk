@@ -664,6 +664,20 @@ function Shell({ children, onNewGame, nav }) {
           .doom-shake, .ring-pulse { animation: none !important; }
         }
 
+        /* ——— Battle stage ——— */
+        @keyframes rb-sweep { 0% { transform: translate(-90px, -90px) rotate(-45deg); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(90px, 90px) rotate(-45deg); opacity: 0; } }
+        .rb-sweep { animation: rb-sweep 600ms ease-in forwards; }
+        @keyframes rb-flash { 0% { transform: scale(0.3); opacity: 0; } 45% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1); opacity: 0.95; } }
+        .rb-flash { animation: rb-flash 520ms ease-out forwards; }
+        @keyframes rb-pop { 0% { transform: scale(0); } 70% { transform: scale(1.3); } 100% { transform: scale(1); } }
+        .rb-pop { animation: rb-pop 320ms ease-out both; }
+        @keyframes rb-fadein { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        .rb-fade-in { animation: rb-fadein 380ms ease-out both; }
+        .rb-lose { filter: grayscale(1) brightness(0.55); transform: scale(0.92); transition: filter 350ms, transform 350ms; }
+        @keyframes rb-slash { 0% { transform: rotate(-45deg) scaleX(0); } 100% { transform: rotate(-45deg) scaleX(1); } }
+        .rb-slash { animation: rb-slash 250ms ease-out 250ms both; }
+        @media (prefers-reduced-motion: reduce) { .rb-sweep, .rb-flash, .rb-pop, .rb-fade-in, .rb-slash { animation: none !important; opacity: 1; } }
+
         /* ——— Mount Doom drama ——— */
         @keyframes doom-shake {
           0%,100% { transform: translate(0,0); } 20% { transform: translate(-3px,2px); }
@@ -1818,9 +1832,10 @@ function ReinforceWorkspace({ game, player, muster, setTradeIn, openPicker }) {
 }
 
 function CombatWorkspace({ game, update, openPicker }) {
+  const side = FACTIONS.find((f) => f.id === game.players[game.currentPlayer]?.faction)?.side || "good";
   return (
     <>
-      <BattlePanel />
+      <BattlePanel side={side} />
       <Panel style={{ borderLeft: `4px solid ${GOLD}` }}>
         <div className="md:flex md:items-center md:justify-between md:gap-4">
           <div className="mb-2 md:mb-0">
@@ -1880,6 +1895,144 @@ function resolveBattle({ att, def, attLeader, defLeader, defStronghold }) {
   return { pairs, attLoss, defLoss };
 }
 
+const BATTLE_FLAVOR = {
+  routGood: ["The Rohirrim ride!", "For Frodo!", "The White Rider leads the charge!", "Elbereth! The enemy breaks!"],
+  routEvil: ["The Shadow advances!", "The Uruk-hai break through!", "The Nazgûl shriek in triumph!", "Mordor's drums thunder on!"],
+  hold: ["You shall not pass!", "The walls hold!", "The defenders stand firm!", "Not one step back!"],
+  split: ["Steel rings on steel.", "Blood on both sides.", "The battle rages on.", "Neither side yields."],
+};
+const pickFlavor = (r, side) => {
+  const key = r.attLoss === 0 ? (side === "evil" ? "routEvil" : "routGood") : r.defLoss === 0 ? "hold" : "split";
+  const opts = BATTLE_FLAVOR[key];
+  return opts[Math.floor(Math.random() * opts.length)];
+};
+
+// Rolls the whole battle on screen: dice tumble in, line up highest-vs-highest, each pair resolves
+// with a sword sweep or a shield flash, then the verdict. Tap anywhere to skip ahead.
+function BattleStage({ plan, onDone }) {
+  const { att, def, result } = plan;
+  const nDice = att.length + def.length;
+  const nPairs = result.pairs.length;
+  const FINAL = nDice + 2 + nPairs; // steps: 0 all tumbling, 1..nDice each die lands, nDice+1 line up, then pairs, then verdict
+  const [step, setStep] = useState(0);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    if (step >= FINAL) return;
+    const delay = step === 0 ? 700 : step < nDice ? 230 : step === nDice ? 650 : step === nDice + 1 ? 600 : 560;
+    timer.current = setTimeout(() => setStep((x) => x + 1), delay);
+    return () => clearTimeout(timer.current);
+  }, [step, FINAL, nDice]);
+  useEffect(() => {
+    if (step >= 1 && step <= nDice) buzz(12);
+    if (step === FINAL) buzz(result.attLoss === 0 ? [10, 30, 10, 30, 70] : result.defLoss === 0 ? 80 : 40);
+  }, [step, nDice, FINAL, result]);
+
+  const big = typeof window !== "undefined" && window.innerWidth >= 768;
+  const size = big ? 84 : 60;
+  const rolling = step <= nDice;
+  const verdict = step >= FINAL;
+  const resolved = (i) => step >= nDice + 2 + i;
+  const rout = result.attLoss === 0;
+  const landed = (k) => step > k; // die k (in roll order) has stopped
+
+  const DieCol = ({ value, mod, tone, lost, tag, glow }) => (
+    <div className="flex flex-col items-center gap-1" style={{ position: "relative" }}>
+      <span className="rb-display text-[10px] tracking-widest uppercase" style={{ color: tone === WAX ? "#e9a58f" : "#cdbf9d" }}>{tag}</span>
+      <div className={lost ? "rb-lose" : ""} style={{ position: "relative", padding: 4, borderRadius: 10, background: glow ? "rgba(233,194,92,0.18)" : "transparent" }}>
+        <Die value={value} size={size} />
+        {mod !== value && (
+          <span className="rb-pop rb-display absolute -top-2 -right-3 text-sm font-black px-1.5 rounded-full" style={{ background: GOLD_BRIGHT, color: INK, border: `2px solid ${INK}` }}>
+            +{mod - value}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="rb-backdrop" onClick={() => !verdict && setStep(FINAL)}>
+      <div
+        className="text-center rounded-sm px-5 py-5 relative overflow-hidden"
+        style={{ background: "rgba(43,32,20,0.97)", border: `1px solid ${GOLD}`, maxWidth: 560, width: "100%" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {verdict && rout && [...Array(9)].map((_, i) => <span key={i} className="ember" style={{ left: `${8 + i * 10.5}%`, bottom: 10, animationDelay: `${i * 0.15}s` }} />)}
+        <div className="rb-display text-xs tracking-[0.3em] uppercase mb-3" style={{ color: GOLD_BRIGHT }}>
+          {rolling ? "The dice are cast…" : verdict ? "The battle is decided" : "Highest against highest"}
+        </div>
+
+        {rolling ? (
+          <div className="space-y-4" onClick={() => setStep(FINAL)}>
+            <div>
+              <div className="rb-display text-sm font-bold tracking-wide mb-2" style={{ color: "#e9a58f" }}>⚔ Attacker</div>
+              <div className="flex justify-center gap-4">
+                {att.map((v, i) => <Die key={i} value={v} rolling={!landed(i)} size={size} />)}
+              </div>
+            </div>
+            <div>
+              <div className="rb-display text-sm font-bold tracking-wide mb-2" style={{ color: "#cdbf9d" }}>🛡 Defender</div>
+              <div className="flex justify-center gap-4">
+                {def.map((v, i) => <Die key={i} value={v} rolling={!landed(att.length + i)} size={size} />)}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rb-fade-in flex justify-center gap-5 md:gap-8" onClick={() => !verdict && setStep(FINAL)}>
+            {result.pairs.map((p, i) => {
+              const done = resolved(i);
+              return (
+                <div key={i} className="relative flex flex-col items-center gap-2" style={{ minWidth: size + 24 }}>
+                  <DieCol value={p.a} mod={p.aMod} tone={WAX} lost={done && !p.attWins} tag={i === 0 ? "highest" : i === 1 ? "second" : "third"} glow={done && p.attWins} />
+                  <span className="rb-display text-xs" style={{ color: "#9a8a66" }}>vs</span>
+                  <DieCol value={p.d} mod={p.dMod} tone={INK} lost={done && p.attWins} tag="" glow={done && !p.attWins} />
+                  {done && p.attWins && (
+                    <>
+                      <span className="rb-sweep absolute left-1/2 top-1/2 -ml-2 -mt-14 text-5xl" style={{ pointerEvents: "none", filter: "drop-shadow(0 0 8px #fff6d5)" }}>⚔</span>
+                      <span className="rb-slash absolute left-0 right-0 top-1/2" style={{ height: 3, background: "linear-gradient(90deg, transparent, #fff6d5, transparent)", transformOrigin: "center", pointerEvents: "none" }} />
+                    </>
+                  )}
+                  {done && !p.attWins && (
+                    <span className="rb-flash absolute left-1/2 top-1/2 -ml-7 -mt-7 w-14 h-14 rounded-full flex items-center justify-center text-3xl" style={{ background: "radial-gradient(circle, rgba(233,194,92,0.55), rgba(233,194,92,0) 70%)", pointerEvents: "none" }}>🛡</span>
+                  )}
+                  {done && (
+                    <span className="rb-pop rb-display text-[10px] font-bold uppercase tracking-wider" style={{ color: p.attWins ? GOLD_BRIGHT : "#cdbf9d" }}>
+                      {p.attWins ? "attacker wins" : p.aMod === p.dMod ? "tie — defender" : "defender wins"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {att.length > def.length && (
+              <div className="flex flex-col items-center gap-1 opacity-40" style={{ minWidth: size + 24 }}>
+                <span className="rb-display text-[10px] tracking-widest uppercase" style={{ color: "#e9a58f" }}>sits out</span>
+                <Die value={[...att].sort((x, y) => y - x)[def.length]} size={size} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {verdict && (
+          <div className="rb-fade-in mt-5 pt-4" style={{ borderTop: "1px solid rgba(233,194,92,0.3)" }}>
+            <div className="rb-display text-2xl md:text-3xl font-black leading-tight" style={{ color: GOLD_BRIGHT }}>
+              {result.attLoss > 0 && `Attacker removes ${result.attLoss}`}
+              {result.attLoss > 0 && result.defLoss > 0 && " · "}
+              {result.defLoss > 0 && `Defender removes ${result.defLoss}`}
+            </div>
+            <div className="text-lg italic mt-1" style={{ color: "#f6ecd4" }}>{plan.flavor}</div>
+            <div className="mt-4">
+              <BigButton onClick={onDone}>Done</BigButton>
+            </div>
+          </div>
+        )}
+        {!verdict && (
+          <div className="text-xs mt-4" style={{ color: "#9a8a66" }}>tap to skip</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DiceEntry({ count, values, onPick, tone }) {
   return (
     <div className="space-y-2">
@@ -1916,7 +2069,7 @@ function DiceEntry({ count, values, onPick, tone }) {
   );
 }
 
-function BattlePanel() {
+function BattlePanel({ side }) {
   const [attCount, setAttCount] = useState(3);
   const [defCount, setDefCount] = useState(2);
   const [att, setAtt] = useState([0, 0, 0]);
@@ -1925,8 +2078,27 @@ function BattlePanel() {
   const [defLeader, setDefLeader] = useState(false);
   const [defStronghold, setDefStronghold] = useState(false);
   const [result, setResult] = useState(null);
+  const [stage, setStage] = useState(null); // an in-progress "Fight!" animation
 
   const ready = att.slice(0, attCount).every((v) => v > 0) && def.slice(0, defCount).every((v) => v > 0);
+
+  // Roll every needed die and play the battle out on screen.
+  const fight = () => {
+    const a = [...Array(attCount)].map(() => rollDie());
+    const d = [...Array(defCount)].map(() => rollDie());
+    const r = resolveBattle({ att: a, def: d, attLeader, defLeader, defStronghold });
+    setResult(null);
+    setStage({ att: a, def: d, result: r, flavor: pickFlavor(r, side) });
+  };
+  const finishFight = () => {
+    const na = [0, 0, 0], nd = [0, 0];
+    stage.att.forEach((v, i) => { na[i] = v; });
+    stage.def.forEach((v, i) => { nd[i] = v; });
+    setAtt(na);
+    setDef(nd);
+    setResult(stage.result);
+    setStage(null);
+  };
 
   const settle = () => {
     const r = resolveBattle({
@@ -2021,17 +2193,23 @@ function BattlePanel() {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <div className="col-span-2">
-            <BigButton tone="wax" onClick={settle} disabled={!ready}>
-              Settle the battle
-            </BigButton>
-          </div>
-          <BigButton tone="ink" onClick={clear}>
-            Clear
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <BigButton tone="wax" onClick={fight}>
+            ⚔ Fight! Roll for us
+          </BigButton>
+          <BigButton tone="ink" onClick={settle} disabled={!ready}>
+            Settle my dice
           </BigButton>
         </div>
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs" style={{ color: INK_FADE }}>Fight! rolls every die above and plays the battle out. Tapped in real dice? Use Settle.</span>
+          <button onClick={clear} className="rb-btn text-xs underline underline-offset-2 shrink-0 ml-3" style={{ color: INK_FADE }}>
+            clear
+          </button>
+        </div>
       </Panel>
+
+      {stage && <BattleStage plan={stage} onDone={finishFight} />}
 
       {result && (
         <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
