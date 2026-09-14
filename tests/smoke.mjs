@@ -102,6 +102,7 @@ check("conquer: territory-card step unlocked", body().includes("draw 1 Territory
 // Lands tab: the board photo, region detection, live muster
 click(find("Lands")); await wait(150);
 check("lands: board map renders", !!doc().querySelector(".rb-lands [data-boardmap] img"));
+check("lands: the Ring is shown on the board", !!doc().querySelector(".rb-lands [data-boardmap] [data-ring]") && body().includes("The Ring is in The Shire"));
 check("lands: region-complete detection", body().includes("Player 1 rules"));
 check("lands: live muster", [...doc().querySelectorAll(".rb-display")].some((e) => e.textContent.trim() === "5"));
 tapBoard(1005, 1160); await wait(80); // Barad-dûr: nobody -> Player 1
@@ -126,6 +127,9 @@ click(find("Turn")); await wait(120);
 click(find("End turn")); await wait(400);
 check("end turn: Fellowship advances and turn passes", body().includes("Buckland") && body().includes("Player 2"));
 check("end turn: conqueror drew a card", body().includes("Player 1 drew a Territory card"));
+click(find("Lands")); await wait(150);
+const ringNode = doc().querySelector(".rb-lands [data-boardmap] [data-ring] circle");
+check("lands: the Ring marker moves with the Fellowship", body().includes("The Ring is in Buckland") && ringNode && ringNode.getAttribute("cx") === "404" && ringNode.getAttribute("cy") === "410");
 
 // Saved games from before the board photo get their territory names migrated (let the first app flush its debounced save first)
 await wait(600);

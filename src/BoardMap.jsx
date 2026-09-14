@@ -8,9 +8,24 @@ import { BOARD, MAP_ANCHORS, territoryAt } from "./mapData.js";
 //   onTap(name)                                  called with the territory tapped
 //   highlight: territory name to ring (last tapped)
 //   maxHeight: CSS max-height for the image (e.g. "70vh")
-export default function BoardMap({ territories, ownerOf, onTap, highlight, maxHeight = "80vh", style = {} }) {
+//   ring: { path: [{ name }], step, destroyed }   draws the Fellowship's road and where the Ring is now
+// Path stops are written the way the rulebook does ("Rhudaur (Rivendell)", "Ithilien"); match them to lands loosely.
+const RING_OFFSET = [30, -26]; // keep the road and the Ring clear of the owner badges
+function anchorForStop(stopName, names) {
+  const clean = (s) => s.toLowerCase().replace(/\s*\(.*\)\s*/g, "").trim();
+  const want = clean(stopName);
+  const exact = names.find((n) => clean(n) === want);
+  const loose = exact || names.find((n) => clean(n).includes(want) || want.includes(clean(n)));
+  const a = loose && MAP_ANCHORS[loose];
+  return a ? [a[0][0] + RING_OFFSET[0], a[0][1] + RING_OFFSET[1]] : null;
+}
+
+export default function BoardMap({ territories, ownerOf, onTap, highlight, maxHeight = "80vh", style = {}, ring }) {
   const box = useRef(null);
   const names = territories.map((t) => t.name);
+  const road = ring ? ring.path.map((p) => anchorForStop(p.name, names)) : [];
+  const roadPts = road.filter(Boolean);
+  const ringAt = ring ? road[Math.min(ring.step, road.length - 1)] : null;
 
   const handle = (e) => {
     const el = box.current;
@@ -42,6 +57,13 @@ export default function BoardMap({ territories, ownerOf, onTap, highlight, maxHe
             <feGaussianBlur stdDeviation="16" />
           </filter>
         </defs>
+        {/* the Fellowship's road and the One Ring */}
+        {roadPts.length > 1 && (
+          <polyline points={roadPts.map((p) => p.join(",")).join(" ")} fill="none" stroke="#2b2014" strokeWidth={12} strokeOpacity={0.5} strokeDasharray="16 18" strokeLinecap="round" />
+        )}
+        {roadPts.length > 1 && (
+          <polyline points={roadPts.map((p) => p.join(",")).join(" ")} fill="none" stroke="#f7d774" strokeWidth={6} strokeOpacity={0.95} strokeDasharray="16 18" strokeLinecap="round" />
+        )}
         {/* soft ownership glow under each owned land */}
         {territories.map((t) => {
           const a = MAP_ANCHORS[t.name];
@@ -74,6 +96,17 @@ export default function BoardMap({ territories, ownerOf, onTap, highlight, maxHe
             </g>
           );
         })}
+        {ringAt && (
+          <g data-ring className="ring-pulse">
+            <circle cx={ringAt[0]} cy={ringAt[1]} r={48} fill={ring.destroyed ? "#ff5a2c" : "#e9c25c"} opacity={0.6} filter="url(#rb-halo)" />
+            <circle cx={ringAt[0]} cy={ringAt[1]} r={26} fill="none" stroke="#2b2014" strokeWidth={14} opacity={0.65} />
+            <circle cx={ringAt[0]} cy={ringAt[1]} r={26} fill="none" stroke={ring.destroyed ? "#ff5a2c" : "#f7d774"} strokeWidth={9} />
+            <circle cx={ringAt[0]} cy={ringAt[1]} r={26} fill="none" stroke="#fff6d5" strokeWidth={2} opacity={0.85} />
+            <text x={ringAt[0]} y={ringAt[1] + 54} textAnchor="middle" fontSize={20} fontWeight="700" fill="#fff6d5" stroke="#2b2014" strokeWidth={3} paintOrder="stroke" fontFamily="serif">
+              {ring.destroyed ? "destroyed" : "the Ring"}
+            </text>
+          </g>
+        )}
       </svg>
     </div>
   );

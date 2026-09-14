@@ -1263,7 +1263,7 @@ function TerritoryPicker({ game, update, playerIdx, mode, onClose }) {
       <div className="rb-modal rb-modal-map" onClick={(e) => e.stopPropagation()}>
         <div className="md:flex md:gap-4 md:items-start">
           <div className="text-center md:flex-1 md:min-w-0">
-            <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={tap} highlight={hot} maxHeight="var(--map-max-h)" />
+            <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={tap} highlight={hot} maxHeight="var(--map-max-h)" ring={{ path: game.path, step: game.ringStep, destroyed: game.ringDestroyed }} />
           </div>
           <div className="md:w-72 shrink-0 mt-3 md:mt-0 md:sticky md:top-0">
             <div className="rb-display text-lg font-bold tracking-wide leading-tight" style={{ color: INK }}>
@@ -2312,9 +2312,12 @@ function LandsScreen({ game, update }) {
   return (
     <div className="rb-lands w-full md:flex md:gap-4 md:items-start">
       <div className="text-center md:shrink-0">
-        <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={paint} highlight={hot} maxHeight="var(--lands-map-h)" />
-        <div className="text-sm mt-1 mb-3 h-5" style={{ color: INK_FADE }}>
+        <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={paint} highlight={hot} maxHeight="var(--lands-map-h)" ring={{ path: game.path, step: game.ringStep, destroyed: game.ringDestroyed }} />
+        <div className="text-sm mt-1 h-5" style={{ color: INK_FADE }}>
           {toast || "Tap a land to pass it to the next player."}
+        </div>
+        <div className="text-sm mb-3" style={{ color: GOLD }}>
+          {game.ringDestroyed ? "The Ring was destroyed in Mount Doom." : `The Ring is in ${game.path[game.ringStep]?.name} (stop ${game.ringStep + 1} of ${game.path.length}).`}
         </div>
       </div>
 
