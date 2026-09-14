@@ -1,0 +1,69 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Red Book — board anchor editor</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #2b2014; color: #ece0c4; display: flex; height: 100vh; }
+  #wrap { position: relative; height: 100vh; flex: 0 0 auto; }
+  canvas { display: block; height: 100vh; }
+  #side { flex: 1; padding: 14px; overflow: auto; }
+  textarea { width: 100%; height: 40vh; font: 12px monospace; background: #1b140c; color: #ece0c4; border: 1px solid #a87b1f; }
+  button, select { font: inherit; padding: 6px 10px; margin: 2px 0; }
+  b { color: #e9c25c; }
+</style>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="side">
+  <h2 style="margin:0 0 6px">Board anchor editor</h2>
+  <p>Open through <code>npm run dev</code> at <code>http://localhost:5173/tools/anchors.html</code>.<br>
+  Each tint is the area a tap sends to that land. <b>Drag</b> a badge (big dot) or helper (small dot) to move it.
+  Pick a land below and <b>click</b> empty map to add a helper point; <b>double-click</b> a helper to delete it.</p>
+  <label>Land for new helpers: <select id="pick"></select></label>
+  <p><button id="copy">Copy JSON</button> then paste it over <code>MAP_ANCHORS</code> in <code>src/mapData.js</code>.</p>
+  <textarea id="out" readonly></textarea>
+</div>
+<script type="module">
+  import { BOARD, MAP_ANCHORS } from "/src/mapData.js";
+  const A = JSON.parse(JSON.stringify(MAP_ANCHORS));
+  const names = Object.keys(A);
+  const c = document.getElementById("c"), ctx = c.getContext("2d");
+  const pick = document.getElementById("pick"), out = document.getElementById("out");
+  names.forEach((n) => { const o = document.createElement("option"); o.textContent = n; pick.appendChild(o); });
+  const img = new Image(); img.src = "/board.webp";
+  const hue = (i) => (i * 137.508) % 360;
+  let tint = null;
+  const buildTint = () => {
+    const W = 270, H = 405, s = BOARD.w / W; // coarse: 1/4 resolution is plenty for a preview
+    const t = document.createElement("canvas"); t.width = W; t.height = H;
+    const id = t.getContext("2d").createImageData(W, H), d = id.data;
+    const pts = []; names.forEach((n, i) => A[n].forEach(([x, y]) => pts.push([x, y, i])));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const px = x * s, py = y * s; let b = 0, bd = 1e12;
+      for (const [qx, qy, i] of pts) { const dd = (qx - px) ** 2 + (qy - py) ** 2; if (dd < bd) { bd = dd; b = i; } }
+      const h = (hue(b) * Math.PI) / 180, o = (y * W + x) * 4;
+      d[o] = 128 + 120 * Math.cos(h); d[o + 1] = 128 + 120 * Math.cos(h - 2.094); d[o + 2] = 128 + 120 * Math.cos(h + 2.094); d[o + 3] = 80;
+    }
+    t.getContext("2d").putImageData(id, 0, 0); tint = t;
+  };
+  const draw = () => {
+    c.width = BOARD.w; c.height = BOARD.h;
+    ctx.drawImage(img, 0, 0);
+    if (tint) ctx.drawImage(tint, 0, 0, BOARD.w, BOARD.h);
+    ctx.font = "bold 22px sans-serif"; ctx.textAlign = "center"; ctx.lineWidth = 2;
+    names.forEach((n) => {
+      A[n].forEach(([x, y], k) => {
+        ctx.beginPath(); ctx.arc(x, y, k ? 9 : 18, 0, 7); ctx.fillStyle = k ? "#e9c25c" : "#fff6d5"; ctx.fill(); ctx.strokeStyle = "#2b2014"; ctx.stroke();
+      });
+      const [x, y] = A[n][0]; ctx.fillStyle = "#2b2014"; ctx.strokeStyle = "rgba(255,246,213,0.9)"; ctx.lineWidth = 5; ctx.strokeText(n, x, y + 42); ctx.fillText(n, x, y + 42);
+    });
+    out.value = "export const MAP_ANCHORS = " + JSON.stringify(A, null, 1).replace(/\[\s+(\d+),\s+(\d+)\s+\]/g, "[$1, $2]").replace(/\n\s*\[/g, " [").replace(/\n\s*\]/g, "]") + ";";
+  };
+  img.onload = () => { buildTint(); draw(); };
+  const toImg = (e) => { const r = c.getBoundingClientRect(); return [((e.clientX - r.left) / r.width) * BOARD.w, ((e.clientY - r.top) / r.height) * BOARD.h]; };
+  const hit = (x, y) => { for (const n of names) for (let k = 0; k < A[n].length; k++) { const [px, py] = A[n][k]; if ((px - x) ** 2 + (py - y) ** 2 < 30 ** 2) return { n, k }; } return null; };
+  let drag = null;
+  c.addEventListener("pointerdown", (e) => { const [x, y] = toImg(e); drag = hit(x, y); if (drag) c.setPointerCapture(e.pointerId); });
+  c.addEventListener("pointermove", (e) => { if (!drag) return; const [x, y] = toImg(e); A[drag.n][drag.k] = [Math.round(x), Math.round(y)]; draw(); });
+  c.addEventListener("pointerup", () => { if (drag) { buildTint(); draw(); } drag = null; });
+  c.addEventListener("click", (e) => { const [x, y] = toImg(e); if (hit(x, y)) return; A[pick.value].push([Math.round(x), Math.round(y)]); buildTint(); draw(); });
+  c.addEventListener("dblclick", (e) => { const [x, y] = toImg(e); const h = hit(x, y); if (h && h.k > 0) { A[h.n].splice(h.k, 1); buildTint(); draw(); } });
+  document.getElementById("copy").onclick = () => navigator.clipboard.writeText(out.value);
+</script>

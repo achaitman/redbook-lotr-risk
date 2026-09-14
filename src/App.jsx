@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import BoardMap from "./BoardMap.jsx";
 
 // ———— Game data: Risk LOTR Trilogy Edition (verified vs. rulebook + gameboard) ————
 const REGIONS = [
@@ -58,8 +59,8 @@ const DEFAULT_TERRITORIES = [
   { name: "The Wold", region: "Rhovanion" },
   { name: "Emyn Muil", region: "Rhovanion" },
   { name: "Dead Marshes", region: "Rhovanion" },
-  { name: "Dagorlad", region: "Rhovanion" },
   { name: "Brown Lands", region: "Rhovanion" },
+  { name: "Rhûn Hills", region: "Rhovanion" },
   // Mirkwood (5)
   { name: "Carrock", region: "Mirkwood" },
   { name: "North Mirkwood", region: "Mirkwood" },
@@ -68,7 +69,7 @@ const DEFAULT_TERRITORIES = [
   { name: "Anduin Valley", region: "Mirkwood" },
   // Rhûn (4)
   { name: "Withered Heath", region: "Rhûn" },
-  { name: "Essaroth", region: "Rhûn" },
+  { name: "Esgaroth", region: "Rhûn" },
   { name: "North Rhûn", region: "Rhûn" },
   { name: "South Rhûn", region: "Rhûn" },
   // Gondor (10)
@@ -80,10 +81,10 @@ const DEFAULT_TERRITORIES = [
   { name: "Lamedon", region: "Gondor" },
   { name: "Vale of Erech", region: "Gondor" },
   { name: "Anfalas", region: "Gondor" },
-  { name: "Andrast", region: "Gondor" },
+  { name: "Dol Amroth", region: "Gondor" },
   { name: "Druwaith Iaur", region: "Gondor" },
   // Mordor (6)
-  { name: "Udun", region: "Mordor", s: true },
+  { name: "Udûn Vale", region: "Mordor", s: true },
   { name: "Mount Doom", region: "Mordor" },
   { name: "Minas Morgul", region: "Mordor", s: true },
   { name: "Gorgoroth", region: "Mordor" },
@@ -98,6 +99,23 @@ const DEFAULT_TERRITORIES = [
   { name: "Deep Harad", region: "Haradwaith" },
 ];
 
+// Names that earlier versions of the app used before the board photo settled the spelling.
+const RENAMED_TERRITORIES = { Essaroth: "Esgaroth", Andrast: "Dol Amroth", Udun: "Udûn Vale" };
+// Printed on the board as a place inside another land, not a territory of its own.
+const REMOVED_TERRITORIES = ["Dagorlad"];
+const migrateNames = (saved) => {
+  const fix = (n) => RENAMED_TERRITORIES[n] || n;
+  // Known lands take their region from the board list; lands the board has that the save lacks are added.
+  const region = Object.fromEntries(DEFAULT_TERRITORIES.map((t) => [t.name, t.region]));
+  const territories = (saved.territories && saved.territories.length ? saved.territories : DEFAULT_TERRITORIES)
+    .map((t) => ({ ...t, name: fix(t.name), region: region[fix(t.name)] || t.region }))
+    .filter((t) => !REMOVED_TERRITORIES.includes(t.name));
+  DEFAULT_TERRITORIES.forEach((t) => { if (!territories.some((x) => x.name === t.name)) territories.push({ ...t }); });
+  const owners = {};
+  Object.entries(saved.owners || {}).forEach(([k, v]) => { if (!REMOVED_TERRITORIES.includes(fix(k))) owners[fix(k)] = v; });
+  return { territories, owners };
+};
+
 const FACTIONS = [
   { id: "yellow", label: "Yellow — Free Peoples", side: "good", hex: "#b8923a" },
   { id: "green", label: "Green — Free Peoples", side: "good", hex: "#4a6741" },
@@ -106,6 +124,22 @@ const FACTIONS = [
 ];
 
 const START_BATTALIONS = { 2: 60, 3: 52, 4: 45 };
+
+// Territory-card sides for the 2-player setup: the Good player starts on the 16 Good-shield lands,
+// the Evil player on the 16 Evil-shield lands. Best guess from the board — check against your cards.
+const GOOD_TERRITORIES = ["The Shire", "Tower Hills", "Evendim Hills", "Lune Valley", "Forlindon", "Mithlond", "Harlindon",
+  "Eregion", "Dunland", "Enedwaith", "Minhiriath", "Fangorn", "Gap of Rohan", "West Rohan", "Lórien", "Rhudaur"];
+const EVIL_TERRITORIES = ["Udûn Vale", "Mount Doom", "Minas Morgul", "Gorgoroth", "Barad-dûr", "Nurn",
+  "Umbar", "Harondor", "Harad", "Near Harad", "Khand", "Deep Harad", "Withered Heath", "Esgaroth", "North Rhûn", "South Rhûn"];
+const startingOwners2p = (players) => {
+  const sideOf = (p) => FACTIONS.find((f) => f.id === p.faction)?.side;
+  const good = players.findIndex((p) => sideOf(p) === "good");
+  const evil = players.findIndex((p) => sideOf(p) === "evil");
+  const owners = {};
+  if (good >= 0) GOOD_TERRITORIES.forEach((n) => { owners[n] = good; });
+  if (evil >= 0) EVIL_TERRITORIES.forEach((n) => { owners[n] = evil; });
+  return owners;
+};
 
 const DEFAULT_PATH = [
   { name: "The Shire", die: false },
@@ -126,41 +160,47 @@ const DEFAULT_PATH = [
   { name: "Gorgoroth", die: true },
   { name: "Mount Doom", die: false },
 ];
-
+// The rulebook's 7-step turn, written so a young reader can lead the table.
+// `kid` is the one-line instruction shown big in the workspace.
 const TURN_STEPS = [
   {
+    key: "reinforce",
     title: "Reinforcements",
-    detail:
-      "Place 1 battalion in each stronghold you hold, then place your reinforcements (the Lands page counts them for you).",
+    kid: "Get your new battalions and put them on the board.",
   },
   {
-    title: "Combat",
-    detail:
-      "Optional. Roll real dice, then settle each battle on the Battle page — it applies every bonus for you.",
+    key: "combat",
+    title: "Attack",
+    kid: "Roll the dice to attack. Attack as many times as you like — or not at all.",
   },
   {
+    key: "fortify",
     title: "Fortify",
-    detail:
-      "One move: shift any number of battalions between two territories connected through your own lands. Never leave a territory empty.",
+    kid: "One move: slide battalions from one of your lands to another, passing only through lands you own. Leave at least 1 behind.",
   },
   {
+    key: "territoryCard",
     title: "Territory card",
-    detail: "Conquered at least one territory this turn? Draw 1 Territory card.",
+    kid: "You won a new land this turn — draw 1 Territory card.",
     conditional: "conquered",
+    skipText: "No new lands this turn, so no Territory card. Skip this step.",
   },
   {
+    key: "adventureCard",
     title: "Adventure card",
-    detail:
-      "Did a Leader conquer a Site of Power this turn? Draw 1 Adventure card (max 1 per turn, hand limit 4). Event cards happen immediately — then draw again.",
+    kid: "A Leader took a Site of Power — draw 1 Adventure card.",
     conditional: "siteOfPower",
+    skipText: "No Leader took a Site of Power, so no Adventure card. Skip this step.",
   },
   {
-    title: "Replace a Leader",
-    detail: "No Leaders left on the board? Place one in any territory you control.",
+    key: "leader",
+    title: "Check your Leaders",
+    kid: "Look at the board. Do you still have a Leader? If not, put one in any land you own.",
   },
   {
+    key: "fellowship",
     title: "Move the Fellowship",
-    detail: "Handled automatically when you end your turn below.",
+    kid: "Tap End turn. The Ring moves by itself.",
     auto: true,
   },
 ];
@@ -338,7 +378,7 @@ const PALANTIR_KB = [
   // Misc
   { category: "Setup", q: "Which territories have strongholds?",
     keywords: ["stronghold", "strongholds", "list", "where", "which"],
-    a: "Strongholds sit in: Evendim Hills (Annúminas), Rhudaur (Rivendell), Moria (Mines of Moria), South Mirkwood (Dol Guldur), Fangorn (Isengard), West Rohan (Helm's Deep), Minas Tirith, Udun, Minas Morgul, Gorgoroth (Barad-dûr), and Umbar (City of the Corsairs). On the Lands tab they show a ⌂." },
+    a: "Strongholds sit in: Evendim Hills (Annúminas), Rhudaur (Rivendell), Moria (Mines of Moria), South Mirkwood (Dol Guldur), Fangorn (Isengard), West Rohan (Helm's Deep), Minas Tirith, Udûn Vale, Minas Morgul, Barad-dûr, and Umbar (City of the Corsairs). On the Lands tab they show a ⌂." },
   { category: "Cards", q: "What are Sites of Power?",
     keywords: ["site", "power", "sites", "leader", "adventure"],
     a: "Sites of Power are special spots inside certain territories. When a Leader conquers a territory containing one, you may draw an Adventure card, and they complete Mission cards. A Site is part of its territory, not a separate space." },
@@ -411,6 +451,8 @@ const freshGame = () => ({
   checks: Array(TURN_STEPS.length).fill(false),
   conquered: false,
   siteOfPower: false,
+  taken: [], // territory names conquered this turn (display only)
+  tradeIns: {}, // card sets cashed in this turn: label -> count
   ringStep: 0,
   ringDestroyed: false,
   path: DEFAULT_PATH.map((p) => ({ ...p })),
@@ -435,10 +477,45 @@ const GOLD_BRIGHT = "#e9c25c";
 const EMBER = "#ff5a2c";
 const GOOD_GREEN = "#4a6741";
 const LINE = "rgba(43,32,20,0.28)";
+const PAPER = "rgba(255,250,235,0.7)";
 
 // subtle paper grain as an inline SVG (no network needed)
 const GRAIN =
   "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E\")";
+
+// ———— Shared game math ————
+function regionOwner(game, regionName) {
+  // returns the player index that owns EVERY territory in the region, else null
+  const terrs = game.territories.filter((t) => t.region === regionName);
+  if (!terrs.length) return null;
+  const first = game.owners[terrs[0].name];
+  if (first === undefined) return null;
+  return terrs.every((t) => game.owners[t.name] === first) ? first : null;
+}
+
+// Everything the reinforcement step needs for one player, computed from the map.
+function musterFor(game, idx, tradeIns) {
+  const sets = tradeIns || {};
+  const terrs = game.territories.filter((t) => game.owners[t.name] === idx);
+  const count = terrs.length;
+  const base = count > 0 ? Math.max(3, Math.floor(count / 3)) : 0;
+  const strongholds = terrs.filter((t) => t.s);
+  const regions = REGIONS.map((r, ri) => ({ name: r.name, bonus: game.regionBonuses[ri] })).filter(
+    (r) => regionOwner(game, r.name) === idx
+  );
+  const regionTotal = regions.reduce((s, r) => s + r.bonus, 0);
+  const cardTotal = CARD_SETS.reduce((s, c) => s + (sets[c.label] || 0) * c.value, 0);
+  return {
+    count,
+    base,
+    strongholds,
+    regions,
+    regionTotal,
+    cardTotal,
+    total: base + regionTotal + cardTotal,
+    mapped: Object.keys(game.owners || {}).length > 0,
+  };
+}
 
 export default function RedBook() {
   const [game, setGame] = useState(freshGame());
@@ -456,10 +533,11 @@ export default function RedBook() {
             ...freshGame(),
             ...saved,
             players: normalizePlayers(saved.players),
-            territories: saved.territories && saved.territories.length ? saved.territories : DEFAULT_TERRITORIES.map((t) => ({ ...t })),
-            owners: saved.owners || {},
+            ...migrateNames(saved),
+            taken: saved.taken || [],
+            tradeIns: saved.tradeIns || {},
           });
-          if (saved.screen === "play") setTab(saved.tab || "turn");
+          if (saved.screen === "play") setTab(saved.tab === "battle" ? "turn" : saved.tab || "turn");
         }
       } catch (e) {}
       setLoaded(true);
@@ -493,29 +571,28 @@ export default function RedBook() {
       </Shell>
     );
 
+  const playing = game.screen === "play";
   return (
-    <Shell onNewGame={game.screen === "play" ? newGame : null}>
-      {game.screen === "setup" ? (
+    <Shell onNewGame={playing ? newGame : null} nav={playing ? <TabBar tab={tab} setTab={setTab} /> : null}>
+      {!playing ? (
         <SetupScreen game={game} update={update} />
       ) : (
         <>
-          <TabBar tab={tab} setTab={setTab} />
           {tab === "turn" && <TurnScreen game={game} update={update} setTab={setTab} />}
-          {tab === "battle" && <BattleScreen />}
           {tab === "lands" && <LandsScreen game={game} update={update} />}
-          {tab === "ring" && <RingScreen game={game} update={update} setTab={setTab} />}
+          {tab === "ring" && (<div className="max-w-3xl mx-auto w-full"><RingScreen game={game} update={update} setTab={setTab} /></div>)}
           {tab === "score" && <ScoreScreen game={game} />}
-          {tab === "palantir" && <PalantirScreen />}
+          {tab === "palantir" && (<div className="max-w-3xl mx-auto w-full"><PalantirScreen /></div>)}
         </>
       )}
     </Shell>
   );
 }
 
-function Shell({ children, onNewGame }) {
+function Shell({ children, onNewGame, nav }) {
   return (
     <div
-      className="min-h-screen w-full"
+      className="rb-shell w-full"
       style={{
         background: `${GRAIN}, radial-gradient(ellipse at 50% 0%, ${PARCHMENT} 0%, ${PARCHMENT_DEEP} 75%, #d2bd8e 100%)`,
         color: INK,
@@ -524,9 +601,46 @@ function Shell({ children, onNewGame }) {
     >
       <style>{`
         .rb-display { font-family: 'Cinzel', 'EB Garamond', Georgia, serif; }
-        .rb-btn { transition: transform 80ms ease, box-shadow 80ms ease; }
+        .rb-btn { transition: transform 80ms ease, box-shadow 80ms ease; -webkit-tap-highlight-color: transparent; }
         .rb-btn:active { transform: translateY(1px); }
         .rb-btn:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
+
+        /* ——— Layout: phone = one scrolling page; tablet (768px+) = fixed shell, scrolling columns ——— */
+        .rb-shell { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+        .rb-header { padding: 10px 16px 0; }
+        .rb-main { flex: 1 1 auto; min-height: 0; width: 100%; max-width: 1480px; margin: 0 auto; padding: 0 16px 28px; }
+        .rb-col { min-height: 0; }
+        @media (min-width: 768px) {
+          html { font-size: 16px; }
+          .rb-shell { height: 100vh; height: 100dvh; overflow: hidden; }
+          .rb-header { display: flex; align-items: center; gap: 18px; padding: 6px 18px; border-bottom: 1px solid ${LINE};
+            background: rgba(43,32,20,0.05); flex: 0 0 auto; }
+          .rb-main { display: flex; flex-direction: column; overflow-y: auto; padding: 14px 18px 24px; }
+          .rb-fill { flex: 1 1 0%; min-height: 0; }
+          .rb-col { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+          .rb-def-col { border-top: none !important; border-left: 1px dashed ${LINE}; }
+        }
+        @media (min-width: 1024px) { html { font-size: 17px; } }
+        @media (min-width: 1280px) { html { font-size: 18px; } }
+        @media (min-width: 768px) { .rb-stepnav { position: sticky; bottom: 0; padding-top: 10px; margin-bottom: 0; padding-bottom: 4px;
+          background: linear-gradient(to bottom, rgba(226,210,170,0) 0%, #e2d2aa 35%); } }
+
+        /* ——— Guided turn ——— */
+        .rb-step-row { border-left: 4px solid transparent; border-radius: 2px; }
+        .rb-step-row.active { background: rgba(168,123,31,0.16); border-left-color: ${GOLD}; }
+        .rb-step-row.done { opacity: 0.75; }
+
+        /* ——— Modal (territory picker, ring roll) ——— */
+        .rb-backdrop { position: fixed; inset: 0; background: rgba(20,14,8,0.62); z-index: 50;
+          display: flex; align-items: center; justify-content: center; padding: 14px; }
+        .rb-modal { background: ${PARCHMENT}; border: 1px solid ${GOLD}; border-radius: 4px; width: 100%; max-width: 1040px;
+          max-height: 92vh; max-height: 92dvh; overflow-y: auto; padding: 16px; box-shadow: 0 14px 40px rgba(0,0,0,0.45); }
+        .rb-modal-map { --map-max-h: 58vh; }
+        .rb-lands { --lands-map-h: 70vh; }
+        @media (min-width: 768px) {
+          .rb-modal-map { --map-max-h: calc(92dvh - 46px); }
+          .rb-lands { --lands-map-h: calc(100dvh - 110px); }
+        }
 
         /* ——— 3D die ——— */
         .die-scene { perspective: 320px; display:inline-block; }
@@ -577,38 +691,28 @@ function Shell({ children, onNewGame }) {
         @keyframes orb-glow { 0%,100% { opacity:.55; transform:scale(0.92); } 50% { opacity:1; transform:scale(1.04); } }
         @media (prefers-reduced-motion: reduce) { .palantir-core { animation: none; } }
       `}</style>
-      <div className="max-w-md mx-auto px-4 pb-24 pt-6">
-        <header className="text-center mb-5">
-          <div className="rb-display text-[11px] tracking-[0.35em] uppercase mb-1" style={{ color: WAX }}>
-            The War of the Ring
-          </div>
-          <h1 className="rb-display text-3xl font-bold tracking-wide" style={{ color: INK }}>
+      <header className="rb-header">
+        <div className="text-center md:text-left md:shrink-0">
+          <h1 className="rb-display text-2xl md:text-xl font-bold tracking-wide leading-tight" style={{ color: INK }}>
             The Red Book
           </h1>
-          <div className="flex items-center justify-center gap-2 mt-1">
-            <Rule w={44} />
-            <span className="rb-display text-xs" style={{ color: GOLD }}>✦</span>
-            <span className="text-sm italic" style={{ color: INK_FADE }}>
-              a companion for Risk · Trilogy Edition
-            </span>
-            <span className="rb-display text-xs" style={{ color: GOLD }}>✦</span>
-            <Rule w={44} />
-          </div>
-          {onNewGame && (
-            <button onClick={onNewGame} className="rb-btn mt-2 text-xs underline underline-offset-2" style={{ color: INK_FADE }}>
+          <span className="block text-xs italic md:hidden" style={{ color: INK_FADE }}>
+            a companion for Risk · Trilogy Edition
+          </span>
+        </div>
+        {nav && <div className="mt-3 md:mt-0 md:flex-1 md:min-w-0">{nav}</div>}
+        {onNewGame && (
+          <div className="text-center md:text-right md:shrink-0 mt-2 md:mt-0">
+            <button onClick={onNewGame} className="rb-btn text-xs underline underline-offset-2" style={{ color: INK_FADE }}>
               start a new game
             </button>
-          )}
-        </header>
-        {children}
-      </div>
+          </div>
+        )}
+      </header>
+      <main className="rb-main">{children}</main>
     </div>
   );
 }
-
-const Rule = ({ w = 40 }) => (
-  <span style={{ display: "inline-block", width: w, height: 1, background: LINE }} />
-);
 
 function Panel({ children, className = "", style = {} }) {
   return (
@@ -648,7 +752,7 @@ function BigButton({ children, onClick, tone = "gold", disabled, small }) {
       onClick={onClick}
       disabled={disabled}
       className={`rb-btn rb-display w-full rounded-sm font-bold tracking-widest uppercase ${
-        small ? "py-2 text-xs" : "py-3 text-sm"
+        small ? "py-2 text-xs" : "py-3 md:py-3.5 text-sm md:text-base"
       } ${disabled ? "opacity-40" : ""}`}
       style={{
         background: disabled ? INK_FADE : bg,
@@ -662,19 +766,19 @@ function BigButton({ children, onClick, tone = "gold", disabled, small }) {
 }
 
 function Stepper({ value, onChange, min = 0, max = 99, warn }) {
-  const btn = "rb-btn rb-display w-10 h-10 text-xl font-bold rounded-sm";
+  const btn = "rb-btn rb-display w-11 h-11 text-2xl font-bold rounded-sm";
   return (
     <div className="flex items-center gap-2">
       <button
         className={btn}
-        style={{ border: `1px solid ${LINE}`, color: INK, background: "rgba(255,250,235,0.7)" }}
+        style={{ border: `1px solid ${LINE}`, color: INK, background: PAPER }}
         onClick={() => onChange(Math.max(min, value - 1))}
         aria-label="decrease"
       >
         −
       </button>
       <div
-        className="rb-display w-14 h-10 flex items-center justify-center text-xl font-bold rounded-sm"
+        className="rb-display w-14 h-11 flex items-center justify-center text-2xl font-bold rounded-sm"
         style={{
           border: `1px solid ${warn ? WAX : LINE}`,
           background: warn ? "rgba(142,47,33,0.12)" : "rgba(255,250,235,0.9)",
@@ -685,12 +789,29 @@ function Stepper({ value, onChange, min = 0, max = 99, warn }) {
       </div>
       <button
         className={btn}
-        style={{ border: `1px solid ${LINE}`, color: INK, background: "rgba(255,250,235,0.7)" }}
+        style={{ border: `1px solid ${LINE}`, color: INK, background: PAPER }}
         onClick={() => onChange(Math.min(max, value + 1))}
         aria-label="increase"
       >
         +
       </button>
+    </div>
+  );
+}
+
+function Disclosure({ title, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-sm mb-4" style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.4)" }}>
+      <button onClick={() => setOpen(!open)} className="rb-btn w-full flex items-center justify-between px-4 py-3 text-left">
+        <span className="rb-display text-sm font-bold tracking-widest uppercase" style={{ color: INK }}>
+          {title}
+        </span>
+        <span className="text-sm" style={{ color: INK_FADE }}>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
     </div>
   );
 }
@@ -727,7 +848,7 @@ const ROLL_FLAVOR = {
   low: ["The shadow lengthens…", "Ill luck this throw.", "The dice betray you."],
 };
 
-function DiceRoller() {
+function DiceRoller({ bare }) {
   const [n, setN] = useState(1);
   const [dice, setDice] = useState([1]);
   const [rolling, setRolling] = useState(false);
@@ -751,10 +872,16 @@ function DiceRoller() {
     }, 650);
   };
 
-  return (
-    <Panel>
+  const body = (
+    <>
       <div className="flex items-center justify-between">
-        <PanelTitle sub="For setup rolls, Hunt checks, or settling who goes first.">Cast the dice</PanelTitle>
+        {bare ? (
+          <span className="text-sm italic" style={{ color: INK_FADE }}>
+            For setup rolls, Hunt checks, or who goes first.
+          </span>
+        ) : (
+          <PanelTitle sub="For setup rolls, Hunt checks, or settling who goes first.">Cast the dice</PanelTitle>
+        )}
         <div className="flex items-center gap-1 shrink-0">
           {[1, 2].map((c) => (
             <button
@@ -764,9 +891,9 @@ function DiceRoller() {
                 setDice([...Array(c)].map((_, i) => dice[i] || 1));
                 setFlavor("");
               }}
-              className="rb-btn rb-display w-8 h-8 rounded-sm text-sm font-bold"
+              className="rb-btn rb-display w-9 h-9 rounded-sm text-sm font-bold"
               style={{
-                background: n === c ? INK : "rgba(255,250,235,0.7)",
+                background: n === c ? INK : PAPER,
                 color: n === c ? GOLD_BRIGHT : INK,
                 border: `1px solid ${LINE}`,
               }}
@@ -779,7 +906,7 @@ function DiceRoller() {
       </div>
       <div className="flex items-center justify-center gap-4 py-3">
         {[...Array(n)].map((_, i) => (
-          <Die key={i} value={dice[i] || 1} rolling={rolling} size={52} />
+          <Die key={i} value={dice[i] || 1} rolling={rolling} size={56} />
         ))}
       </div>
       <div className="text-center mb-3 h-5">
@@ -793,8 +920,9 @@ function DiceRoller() {
       <BigButton onClick={cast} disabled={rolling}>
         {rolling ? "The bones tumble…" : "Cast"}
       </BigButton>
-    </Panel>
+    </>
   );
+  return bare ? body : <Panel>{body}</Panel>;
 }
 
 function Die({ value = 1, rolling = false, size = 48 }) {
@@ -835,81 +963,105 @@ function SetupScreen({ game, update }) {
   };
 
   return (
-    <>
-      <Panel>
-        <PanelTitle sub="How many armies march to war?">Muster the players</PanelTitle>
-        <div className="grid grid-cols-3 gap-2">
-          {[2, 3, 4].map((n) => (
-            <button
-              key={n}
-              onClick={() => setCount(n)}
-              className="rb-btn rb-display py-3 rounded-sm text-lg font-bold"
-              style={{
-                background: count === n ? INK : "rgba(255,250,235,0.7)",
-                color: count === n ? GOLD_BRIGHT : INK,
-                border: `1px solid ${LINE}`,
-              }}
-            >
-              {n}
-            </button>
-          ))}
+    <div className="max-w-5xl mx-auto w-full">
+      <div className="text-center mb-4 hidden md:block">
+        <div className="rb-display text-[11px] tracking-[0.35em] uppercase" style={{ color: WAX }}>
+          The War of the Ring
         </div>
-        {count && (
-          <p className="text-sm mt-3" style={{ color: INK_FADE }}>
-            Each army musters <b style={{ color: INK }}>{START_BATTALIONS[count]} battalions</b> (small figure = 1,
-            mounted = 3, large creature = 5) and <b style={{ color: INK }}>2 Leaders</b>.
-          </p>
-        )}
-      </Panel>
+        <span className="text-sm italic" style={{ color: INK_FADE }}>
+          a companion for Risk · Trilogy Edition
+        </span>
+      </div>
+      <div className="md:grid md:grid-cols-2 md:gap-4">
+        <div>
+          <Panel>
+            <PanelTitle sub="How many armies march to war?">Muster the players</PanelTitle>
+            <div className="grid grid-cols-3 gap-2">
+              {[2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setCount(n)}
+                  className="rb-btn rb-display py-3 rounded-sm text-xl font-bold"
+                  style={{
+                    background: count === n ? INK : PAPER,
+                    color: count === n ? GOLD_BRIGHT : INK,
+                    border: `1px solid ${LINE}`,
+                  }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            {count && (
+              <p className="text-sm mt-3" style={{ color: INK_FADE }}>
+                Each army musters <b style={{ color: INK }}>{START_BATTALIONS[count]} battalions</b> (small figure = 1,
+                mounted = 3, large creature = 5) and <b style={{ color: INK }}>2 Leaders</b>.
+              </p>
+            )}
+          </Panel>
 
-      {count && (
-        <Panel>
-          <PanelTitle sub="Name each commander and choose their banner.">The armies</PanelTitle>
-          <div className="space-y-3">
-            {game.players.map((p, i) => {
-              const fac = FACTIONS.find((f) => f.id === p.faction);
-              return (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="w-4 h-4 rounded-full shrink-0" style={{ background: fac.hex, border: "1px solid rgba(0,0,0,0.3)" }} />
-                  <input
-                    value={p.name}
-                    onChange={(e) => setPlayer(i, { name: e.target.value })}
-                    className="flex-1 min-w-0 px-2 py-2 rounded-sm text-base"
-                    style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
-                  />
-                  <select
-                    value={p.faction}
-                    onChange={(e) => setPlayer(i, { faction: e.target.value })}
-                    className="px-1 py-2 rounded-sm text-sm max-w-[40%]"
-                    style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
-                  >
-                    {FACTIONS.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              );
-            })}
-          </div>
-          {count === 3 && (
-            <p className="text-sm mt-3 italic" style={{ color: WAX }}>
-              In a 3-player game, one army is the Free Peoples and two serve Sauron.
-            </p>
+          {count && (
+            <Panel>
+              <PanelTitle sub="Name each commander and choose their banner.">The armies</PanelTitle>
+              <div className="space-y-3">
+                {game.players.map((p, i) => {
+                  const fac = FACTIONS.find((f) => f.id === p.faction);
+                  return (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="w-4 h-4 rounded-full shrink-0" style={{ background: fac.hex, border: "1px solid rgba(0,0,0,0.3)" }} />
+                      <input
+                        value={p.name}
+                        onChange={(e) => setPlayer(i, { name: e.target.value })}
+                        className="flex-1 min-w-0 px-2 py-2 rounded-sm text-base"
+                        style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
+                      />
+                      <select
+                        value={p.faction}
+                        onChange={(e) => setPlayer(i, { faction: e.target.value })}
+                        className="px-1 py-2 rounded-sm text-sm max-w-[40%]"
+                        style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
+                      >
+                        {FACTIONS.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+              {count === 3 && (
+                <p className="text-sm mt-3 italic" style={{ color: WAX }}>
+                  In a 3-player game, one army is the Free Peoples and two serve Sauron.
+                </p>
+              )}
+            </Panel>
           )}
-        </Panel>
-      )}
+          {count && <DiceRoller />}
+        </div>
 
+        <div>
+          {count && (
+            <Panel>
+              <PanelTitle sub="Tick each as the table is prepared.">Setting the board</PanelTitle>
+              <SetupChecklist items={count === 2 ? SETUP_2P : [...SETUP_BY_COUNT[count], ...SETUP_COMMON]} />
+            </Panel>
+          )}
+        </div>
+      </div>
+      {count === 2 && (
+        <p className="text-sm mb-3 px-1" style={{ color: INK_FADE }}>
+          When the war begins, the Free Peoples' 16 Good lands and Sauron's 16 Evil lands are marked on the map for you. Mark the
+          unclaimed lands you draft afterwards (Lands tab, or "Mark my lands" in step 1).
+        </p>
+      )}
       {count && (
-        <Panel>
-          <PanelTitle sub="Tick each as the table is prepared.">Setting the board</PanelTitle>
-          <SetupChecklist items={count === 2 ? SETUP_2P : [...SETUP_BY_COUNT[count], ...SETUP_COMMON]} />
-        </Panel>
+        <BigButton onClick={() => update({ screen: "play", ...(count === 2 && !Object.keys(game.owners || {}).length ? { owners: startingOwners2p(game.players) } : {}) })}>
+          Begin the war
+        </BigButton>
       )}
-
-      {count && <BigButton onClick={() => update({ screen: "play" })}>Begin the war</BigButton>}
-    </>
+    </div>
   );
 }
 
@@ -922,7 +1074,7 @@ function SetupChecklist({ items }) {
           <button onClick={() => setDone((d) => ({ ...d, [i]: !d[i] }))} className="rb-btn w-full text-left flex gap-3 items-start">
             <CheckBox checked={!!done[i]} />
             <span
-              className="text-[15px] leading-snug"
+              className="text-base leading-snug"
               style={{ color: done[i] ? INK_FADE : INK, textDecoration: done[i] ? "line-through" : "none" }}
             >
               {t}
@@ -937,7 +1089,7 @@ function SetupChecklist({ items }) {
 function CheckBox({ checked }) {
   return (
     <span
-      className="rb-display shrink-0 w-6 h-6 mt-0.5 rounded-sm flex items-center justify-center text-sm font-bold"
+      className="rb-display shrink-0 w-7 h-7 rounded-sm flex items-center justify-center text-base font-bold"
       style={{
         border: `1.5px solid ${checked ? GOLD : LINE}`,
         background: checked ? GOLD : "rgba(255,250,235,0.8)",
@@ -950,22 +1102,22 @@ function CheckBox({ checked }) {
 }
 
 // ———— Tabs ————
+const TABS = [
+  { id: "turn", label: "Turn" },
+  { id: "lands", label: "Lands" },
+  { id: "ring", label: "Ring" },
+  { id: "score", label: "Score" },
+  { id: "palantir", label: "Stone" },
+];
+
 function TabBar({ tab, setTab }) {
-  const tabs = [
-    { id: "turn", label: "Turn" },
-    { id: "battle", label: "Battle" },
-    { id: "lands", label: "Lands" },
-    { id: "ring", label: "Ring" },
-    { id: "score", label: "Score" },
-    { id: "palantir", label: "Stone" },
-  ];
   return (
-    <nav className="grid grid-cols-6 mb-4 rounded-sm overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
-      {tabs.map((t) => (
+    <nav className="grid grid-cols-5 md:flex md:justify-center rounded-sm overflow-hidden" style={{ border: `1px solid ${LINE}` }}>
+      {TABS.map((t) => (
         <button
           key={t.id}
           onClick={() => setTab(t.id)}
-          className="rb-btn rb-display py-2.5 text-[9px] font-bold tracking-wide uppercase"
+          className="rb-btn rb-display py-2.5 md:py-2 md:px-6 text-[11px] md:text-xs font-bold tracking-wider uppercase"
           style={{
             background: tab === t.id ? INK : "rgba(255,250,235,0.6)",
             color: tab === t.id ? GOLD_BRIGHT : INK,
@@ -980,39 +1132,213 @@ function TabBar({ tab, setTab }) {
 
 function FlagToggle({ label, value, onChange }) {
   return (
-    <button onClick={() => onChange(!value)} className="rb-btn flex items-center gap-3 text-left">
+    <button onClick={() => onChange(!value)} className="rb-btn flex items-center gap-3 text-left py-1">
       <span
-        className="w-10 h-6 rounded-full relative shrink-0"
+        className="w-12 h-7 rounded-full relative shrink-0"
         style={{ background: value ? GOLD : "rgba(43,32,20,0.25)", transition: "background 120ms" }}
       >
         <span
-          className="absolute top-0.5 w-5 h-5 rounded-full"
-          style={{ left: value ? 18 : 2, background: "#f6ecd4", transition: "left 120ms", boxShadow: "0 1px 2px rgba(0,0,0,0.3)" }}
+          className="absolute top-0.5 w-6 h-6 rounded-full"
+          style={{ left: value ? 22 : 2, background: "#f6ecd4", transition: "left 120ms", boxShadow: "0 1px 2px rgba(0,0,0,0.3)" }}
         />
       </span>
-      <span className="text-[15px]" style={{ color: INK }}>
+      <span className="text-base" style={{ color: INK }}>
         {label}
       </span>
     </button>
   );
 }
 
-// ———— Turn screen ————
+// ———— Territory picker (modal): tap the board to mark lands without leaving the turn ————
+function ownerLookup(game) {
+  return (name) => {
+    const i = game.owners[name];
+    if (i === undefined || i < 0) return null;
+    const p = game.players[i];
+    const fac = p ? FACTIONS.find((f) => f.id === p.faction) : null;
+    return fac ? { hex: fac.hex, label: p.name } : null;
+  };
+}
+
+function PlayerLegend({ game }) {
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm" style={{ color: INK_FADE }}>
+      {game.players.map((p, i) => {
+        const fac = FACTIONS.find((f) => f.id === p.faction);
+        return (
+          <span key={i} className="flex items-center gap-1">
+            <span className="inline-block w-3.5 h-3.5 rounded-full" style={{ background: fac.hex, border: "1.5px solid #fff6d5", boxShadow: "0 0 0 1px rgba(43,32,20,0.5)" }} />
+            {p.name}
+          </span>
+        );
+      })}
+      <span className="flex items-center gap-1">
+        <span className="inline-block w-3 h-3 rounded-full" style={{ border: "2px dashed rgba(43,32,20,0.6)" }} /> nobody yet · ⌂ stronghold
+      </span>
+    </div>
+  );
+}
+
+// Region-by-region chips: the fallback when a land is hard to hit on the photo.
+function RegionChipList({ game, playerIdx, onTap }) {
+  const facOf = (i) => (i === undefined || i < 0 ? null : FACTIONS.find((f) => f.id === game.players[i]?.faction));
+  return (
+    <div className="md:grid md:grid-cols-2 md:gap-2">
+      {REGIONS.map((r) => {
+        const terrs = game.territories.filter((t) => t.region === r.name);
+        return (
+          <div key={r.name} className="mb-2 md:mb-0">
+            <div className="rb-display text-xs font-bold tracking-wide mb-1" style={{ color: INK_FADE }}>
+              {r.name}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {terrs.map((t) => {
+                const o = game.owners[t.name];
+                const hex = facOf(o)?.hex;
+                const mine = o === playerIdx;
+                return (
+                  <button
+                    key={t.name}
+                    onClick={() => onTap(t.name)}
+                    className="rb-btn text-sm px-2 py-1.5 rounded-sm flex items-center gap-1"
+                    style={{ background: hex || PAPER, color: hex ? "#f6ecd4" : INK, border: `1px solid ${hex || LINE}`, outline: mine ? `2px solid ${GOLD_BRIGHT}` : "none", outlineOffset: -2 }}
+                  >
+                    {t.s && <span style={{ opacity: 0.85 }}>⌂</span>}
+                    {t.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TerritoryPicker({ game, update, playerIdx, mode, onClose }) {
+  const player = game.players[playerIdx];
+  const [toast, setToast] = useState(null); // { text, undo? }
+  const [hot, setHot] = useState(null);
+  const [showList, setShowList] = useState(false);
+
+  const tap = (name) => {
+    const before = { owners: game.owners, taken: game.taken || [], conquered: game.conquered };
+    const owners = { ...game.owners };
+    const mine = owners[name] === playerIdx;
+    buzz(8);
+    setHot(name);
+    if (mode === "conquer") {
+      if (mine) {
+        setToast({ text: `${name} is already ${player.name}'s.` });
+        return;
+      }
+      owners[name] = playerIdx;
+      update({ owners, conquered: true, taken: [...before.taken, name] });
+      setToast({ text: `${name} is now ${player.name}'s!`, undo: () => { update(before); setToast(null); setHot(null); } });
+      return;
+    }
+    if (mine) delete owners[name];
+    else owners[name] = playerIdx;
+    update({ owners });
+    setToast({ text: mine ? `${name} — cleared.` : `${name} is ${player.name}'s.` });
+  };
+
+  return (
+    <div className="rb-backdrop" onClick={onClose}>
+      <div className="rb-modal rb-modal-map" onClick={(e) => e.stopPropagation()}>
+        <div className="md:flex md:gap-4 md:items-start">
+          <div className="text-center md:flex-1 md:min-w-0">
+            <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={tap} highlight={hot} maxHeight="var(--map-max-h)" />
+          </div>
+          <div className="md:w-72 shrink-0 mt-3 md:mt-0 md:sticky md:top-0">
+            <div className="rb-display text-lg font-bold tracking-wide leading-tight" style={{ color: INK }}>
+              {mode === "conquer" ? "Which land did you take?" : `${player.name}'s lands`}
+            </div>
+            <div className="text-sm italic mt-0.5" style={{ color: INK_FADE }}>
+              {mode === "conquer" ? "Tap the land on the board. Tap Done when you're finished." : "Tap a land to make it yours. Tap it again to clear it."}
+            </div>
+
+            <div className="mt-3 rounded-sm px-3 py-2 min-h-[3.5rem]" style={{ background: toast ? "rgba(43,32,20,0.92)" : "rgba(43,32,20,0.06)", border: `1px solid ${toast ? GOLD : LINE}` }}>
+              {toast ? (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-base font-semibold" style={{ color: GOLD_BRIGHT }}>{toast.text}</span>
+                  {toast.undo && (
+                    <button onClick={toast.undo} className="rb-btn rb-display text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-sm shrink-0" style={{ background: "rgba(255,250,235,0.15)", color: "#f6ecd4", border: "1px solid rgba(233,194,92,0.5)" }}>
+                      Undo
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <span className="text-sm" style={{ color: INK_FADE }}>Nothing tapped yet.</span>
+              )}
+            </div>
+
+            <div className="mt-3">
+              <BigButton tone="ink" onClick={onClose}>Done</BigButton>
+            </div>
+            <div className="mt-3"><PlayerLegend game={game} /></div>
+            <button onClick={() => setShowList(!showList)} className="rb-btn mt-3 text-sm underline underline-offset-2" style={{ color: GOLD }}>
+              {showList ? "Hide the list" : "Can't find it? Pick from a list"}
+            </button>
+          </div>
+        </div>
+        {showList && (
+          <div className="mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
+            <RegionChipList game={game} playerIdx={playerIdx} onTap={tap} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ———— Turn screen: a guided, step-by-step turn ————
 function TurnScreen({ game, update, setTab }) {
   const [ending, setEnding] = useState(false);
   const [endRoll, setEndRoll] = useState(null);
+  const [picker, setPicker] = useState(null); // null | "conquer" | "paint"
+  const workspaceRef = useRef(null);
+
+  const firstOpen = game.checks.findIndex((c, i) => !c && !TURN_STEPS[i].auto);
+  const defaultFocus = firstOpen === -1 ? TURN_STEPS.length - 1 : firstOpen;
+  const [focus, setFocusRaw] = useState(defaultFocus);
+  const setFocus = (i) => {
+    setFocusRaw(i);
+    const el = workspaceRef.current;
+    if (!el) return;
+    if (window.innerWidth >= 768) el.scrollTo({ top: 0, behavior: "smooth" });
+    else el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  useEffect(() => {
+    setFocusRaw(defaultFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.currentPlayer, game.round]);
+
   const player = game.players[game.currentPlayer];
   const fac = FACTIONS.find((f) => f.id === player.faction);
   const active = game.players.filter((p) => !p.eliminated);
-
-  const toggle = (i) => {
-    const checks = game.checks.slice();
-    checks[i] = !checks[i];
-    update({ checks });
-  };
+  const muster = musterFor(game, game.currentPlayer, game.tradeIns);
 
   const setPlayer = (i, patch) =>
     update({ players: game.players.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
+
+  const setCheck = (i, val) => {
+    const checks = game.checks.slice();
+    checks[i] = val;
+    update({ checks });
+  };
+
+  // Cashing in a set takes 3 cards out of the hand automatically.
+  const setTradeIn = (label, v) => {
+    const prev = (game.tradeIns || {})[label] || 0;
+    const diff = v - prev;
+    const cards = Math.max(0, Math.min(99, (player.cards || 0) - diff * 3));
+    update({
+      tradeIns: { ...(game.tradeIns || {}), [label]: v },
+      players: game.players.map((p, idx) => (idx === game.currentPlayer ? { ...p, cards } : p)),
+    });
+  };
 
   const nextIdx = (from) => {
     let i = from;
@@ -1023,10 +1349,26 @@ function TurnScreen({ game, update, setTab }) {
     return from;
   };
 
+  const step = TURN_STEPS[focus];
+  const isSkipped = (s) =>
+    (s.conditional === "conquered" && !game.conquered) || (s.conditional === "siteOfPower" && !game.siteOfPower);
+
+  const goNext = () => {
+    buzz(10);
+    setCheck(focus, true);
+    setFocus(Math.min(focus + 1, TURN_STEPS.length - 1));
+  };
+  const goBack = () => {
+    if (focus === 0) return;
+    setCheck(focus - 1, false);
+    setFocus(focus - 1);
+  };
+
   // One-tap end of turn: handles the Fellowship, card draw, and pass
   const current = game.path[game.ringStep];
   const atDoom = game.ringStep === game.path.length - 1;
   const needsRoll = !game.ringDestroyed && (atDoom || current.die);
+  const nextStop = game.path[game.ringStep + 1];
 
   const finishTurn = (ringPatch, summary) => {
     const ni = nextIdx(game.currentPlayer);
@@ -1041,8 +1383,11 @@ function TurnScreen({ game, update, setTab }) {
       checks: Array(TURN_STEPS.length).fill(false),
       conquered: false,
       siteOfPower: false,
+      taken: [],
+      tradeIns: {},
       lastTurn: { by: player.name, summary, drewCard: game.conquered },
     });
+    setFocusRaw(0);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -1054,218 +1399,463 @@ function TurnScreen({ game, update, setTab }) {
       return;
     }
     if (!needsRoll) {
-      const next = game.path[game.ringStep + 1];
-      finishTurn({ ringStep: game.ringStep + 1 }, `The Fellowship marched on to ${next.name}.`);
+      finishTurn({ ringStep: game.ringStep + 1 }, `The Fellowship marched on to ${nextStop.name}.`);
       return;
     }
-    // a roll is required — tumble the die first
+    // a roll is required — tumble the die, then hold the result on screen until Done
     setEnding(true);
     setEndRoll({ rolling: true, value: 1 });
     buzz([15, 30, 15, 30, 15]);
     setTimeout(() => {
       const r = rollDie();
-      setEndRoll({ rolling: false, value: r });
-      buzz(r >= 4 ? [10, 40, 60] : 80);
-      setTimeout(() => {
-        setEnding(false);
-        setEndRoll(null);
-        if (atDoom) {
-          if (r >= 4) {
-            update({ ringDestroyed: true });
-            finishTurn(
-              { ringDestroyed: true },
-              `${player.name} rolled a ${r} — THE RING IS DESTROYED! The war is over; tally the Score page.`
-            );
-          } else {
-            finishTurn({}, `${player.name} rolled a ${r} at Mount Doom — the Ring endures. Next player rolls again.`);
-          }
-        } else {
-          if (r >= 4) {
-            const next = game.path[game.ringStep + 1];
-            finishTurn({ ringStep: game.ringStep + 1 }, `Rolled a ${r} — the Fellowship escaped ${current.name} and reached ${next.name}.`);
-          } else {
-            finishTurn({}, `Rolled a ${r} — the Fellowship is held at ${current.name}.`);
-          }
-        }
-      }, 900);
-    }, 700);
+      const ok = r >= 4;
+      buzz(ok ? [10, 40, 60] : 80);
+      let outcome;
+      if (atDoom) {
+        outcome = ok
+          ? { title: "The Ring is destroyed!", detail: `${player.name} rolled a ${r}. The war is over — time to count the scores.`, destroyed: true,
+              summary: `${player.name} rolled a ${r} at Mount Doom — THE RING IS DESTROYED!` }
+          : { title: "The Ring endures…", detail: `${player.name} rolled a ${r}. It takes a 4, 5 or 6. The next player tries again at the end of their turn.`,
+              patch: {}, summary: `${player.name} rolled a ${r} at Mount Doom — the Ring endures. Next player rolls again.` };
+      } else {
+        outcome = ok
+          ? { title: "The Fellowship presses on!", detail: `${player.name} rolled a ${r}. The Fellowship leaves ${current.name} and reaches ${nextStop.name}.`,
+              patch: { ringStep: game.ringStep + 1 }, summary: `Rolled a ${r} — the Fellowship escaped ${current.name} and reached ${nextStop.name}.` }
+          : { title: "Held fast…", detail: `${player.name} rolled a ${r}. It takes a 4, 5 or 6 to leave ${current.name}. The next player tries again.`,
+              patch: {}, summary: `Rolled a ${r} — the Fellowship is held at ${current.name}.` };
+      }
+      setEndRoll({ rolling: false, value: r, ok, ...outcome });
+    }, 900);
   };
 
-  const allDone = game.checks.slice(0, 6).every(Boolean);
+  const closeRoll = () => {
+    const o = endRoll;
+    if (!o || o.rolling) return;
+    setEnding(false);
+    setEndRoll(null);
+    if (o.destroyed) {
+      update({ ringDestroyed: true, lastTurn: { by: player.name, summary: o.summary, drewCard: false } });
+      if (setTab) setTab("score");
+      return;
+    }
+    finishTurn(o.patch, o.summary);
+  };
+
+  const ringLine = game.ringDestroyed
+    ? "The Ring is destroyed — the war is over."
+    : atDoom
+    ? "Roll 4 or more to destroy the Ring!"
+    : needsRoll
+    ? `Roll 4 or more to leave ${current.name}.`
+    : `The Fellowship will walk to ${nextStop.name}.`;
+
+  const endTurnBlock = (
+    <div>
+      <BigButton tone={focus === TURN_STEPS.length - 1 ? "gold" : "ink"} onClick={endTurn} disabled={ending}>
+        {ending ? "The dice tumble…" : "End turn"}
+      </BigButton>
+      <div className="text-center text-sm mt-1.5" style={{ color: INK_FADE }}>
+        {needsRoll && !game.ringDestroyed ? "⚂ " : ""}
+        {ringLine}
+      </div>
+    </div>
+  );
 
   return (
-    <>
-      {game.lastTurn && (
-        <Panel style={{ background: "rgba(43,32,20,0.06)", borderStyle: "dashed" }}>
-          <p className="text-[15px]" style={{ color: INK }}>
-            <span className="rb-display text-xs font-bold uppercase tracking-widest" style={{ color: GOLD }}>
+    <div className="rb-fill md:grid md:grid-cols-[minmax(300px,2fr)_minmax(0,3fr)] md:grid-rows-[minmax(0,1fr)] md:gap-5">
+      {/* ——— Left: who's up, the steps, end turn ——— */}
+      <div className="rb-col md:pr-1">
+        <Panel style={{ borderLeft: `6px solid ${fac.hex}`, marginBottom: 12 }}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs uppercase tracking-widest" style={{ color: INK_FADE }}>
+                Round {game.round} · now marching
+              </div>
+              <div className="rb-display text-2xl md:text-3xl font-bold leading-tight truncate">{player.name}</div>
+            </div>
+            <span
+              className="rb-display text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-sm shrink-0"
+              style={{ background: fac.side === "good" ? GOOD_GREEN : WAX, color: "#f6ecd4" }}
+            >
+              {fac.side === "good" ? "Free Peoples" : "Sauron"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
+            <div className="min-w-0">
+              <div className="rb-display text-sm font-bold tracking-wide">Territory cards in hand</div>
+              {(player.cards || 0) >= 5 && (
+                <div className="text-sm font-semibold leading-tight" style={{ color: WAX }}>
+                  5 or more — trade a set in step 1!
+                </div>
+              )}
+            </div>
+            <Stepper
+              value={player.cards || 0}
+              onChange={(v) => setPlayer(game.currentPlayer, { cards: v })}
+              max={12}
+              warn={(player.cards || 0) >= 5}
+            />
+          </div>
+        </Panel>
+
+        {game.lastTurn && (
+          <div className="text-sm px-1 mb-3" style={{ color: INK_FADE }}>
+            <span className="rb-display text-[10px] font-bold uppercase tracking-widest" style={{ color: GOLD }}>
               Last turn ·{" "}
             </span>
             {game.lastTurn.summary}
-            {game.lastTurn.drewCard && (
-              <span style={{ color: INK_FADE }}> {game.lastTurn.by} drew a Territory card.</span>
-            )}
-          </p>
-        </Panel>
-      )}
-
-      <Panel style={{ borderLeft: `4px solid ${fac.hex}` }}>
-        <div className="flex items-baseline justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-widest" style={{ color: INK_FADE }}>
-              Round {game.round} · now marching
-            </div>
-            <div className="rb-display text-2xl font-bold">{player.name}</div>
+            {game.lastTurn.drewCard && <span> {game.lastTurn.by} drew a Territory card.</span>}
           </div>
-          <span
-            className="rb-display text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-sm"
-            style={{ background: fac.side === "good" ? GOOD_GREEN : WAX, color: "#f6ecd4" }}
-          >
-            {fac.side === "good" ? "Free Peoples" : "Sauron"}
-          </span>
-        </div>
-        <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
-          <div>
-            <div className="rb-display text-sm font-bold tracking-wide">Territory cards in hand</div>
-            {(player.cards || 0) >= 5 && (
-              <div className="text-sm font-semibold" style={{ color: WAX }}>
-                5 or more — you MUST trade a set this turn!
-              </div>
-            )}
-          </div>
-          <Stepper
-            value={player.cards || 0}
-            onChange={(v) => setPlayer(game.currentPlayer, { cards: v })}
-            max={12}
-            warn={(player.cards || 0) >= 5}
-          />
-        </div>
-      </Panel>
+        )}
 
-      <Panel>
-        <PanelTitle sub="Seven deeds, in order. Tick each as it is done.">The turn</PanelTitle>
-
-        <div
-          className="flex flex-col gap-2 mb-4 p-3 rounded-sm"
-          style={{ background: "rgba(43,32,20,0.05)", border: `1px dashed ${LINE}` }}
-        >
-          <FlagToggle label="Conquered a territory this turn" value={game.conquered} onChange={(v) => update({ conquered: v })} />
-          <FlagToggle label="A Leader took a Site of Power" value={game.siteOfPower} onChange={(v) => update({ siteOfPower: v })} />
-        </div>
-
-        <ol className="space-y-1">
-          {TURN_STEPS.map((s, i) => {
-            const skipped =
-              (s.conditional === "conquered" && !game.conquered) ||
-              (s.conditional === "siteOfPower" && !game.siteOfPower);
-            const isAuto = !!s.auto;
-            return (
-              <li key={i}>
-                <button
-                  onClick={() => !isAuto && toggle(i)}
-                  className="rb-btn w-full text-left flex gap-3 items-start py-2"
-                  style={{ opacity: (skipped && !game.checks[i]) || isAuto ? 0.55 : 1 }}
-                >
-                  {isAuto ? (
-                    <span className="rb-display shrink-0 w-6 h-6 mt-0.5 rounded-sm flex items-center justify-center text-xs" style={{ border: `1.5px dashed ${GOLD}`, color: GOLD }}>
+        <Panel style={{ padding: 8, marginBottom: 12 }}>
+          <ol>
+            {TURN_STEPS.map((s, i) => {
+              const done = game.checks[i];
+              const skipped = isSkipped(s);
+              const isFocus = focus === i;
+              const status = isFocus
+                ? "◀ now"
+                : done
+                ? "done"
+                : skipped
+                ? "skip"
+                : s.key === "combat" && game.taken?.length
+                ? `won ${game.taken.length}`
+                : "";
+              return (
+                <li key={i} data-step={i} className={`rb-step-row flex items-center gap-2 ${isFocus ? "active" : ""} ${done && !isFocus ? "done" : ""}`}>
+                  {s.auto ? (
+                    <span className="rb-display shrink-0 w-7 h-7 ml-2 rounded-sm flex items-center justify-center text-sm" style={{ border: `1.5px dashed ${GOLD}`, color: GOLD }}>
                       ⚂
                     </span>
                   ) : (
-                    <CheckBox checked={game.checks[i]} />
+                    <button onClick={() => setCheck(i, !done)} className="rb-btn shrink-0 ml-2 py-2" aria-label={`mark step ${i + 1} ${done ? "not done" : "done"}`}>
+                      <CheckBox checked={done} />
+                    </button>
                   )}
-                  <span className="flex-1">
+                  <button onClick={() => setFocus(i)} className="rb-btn flex-1 min-w-0 text-left py-2.5 pr-2 flex items-center justify-between gap-2">
                     <span
-                      className="rb-display text-sm font-bold tracking-wide block"
-                      style={{
-                        textDecoration: game.checks[i] ? "line-through" : "none",
-                        color: game.checks[i] ? INK_FADE : INK,
-                      }}
+                      className="rb-display text-base font-bold tracking-wide truncate"
+                      style={{ color: done && !isFocus ? INK_FADE : INK, textDecoration: done && !isFocus ? "line-through" : "none" }}
                     >
                       {i + 1}. {s.title}
-                      {skipped && (
-                        <em className="ml-2 font-normal normal-case tracking-normal" style={{ color: INK_FADE, fontFamily: "'EB Garamond', serif" }}>
-                          — skip
-                        </em>
-                      )}
                     </span>
-                    {!game.checks[i] && (
-                      <span className="text-sm leading-snug block mt-0.5" style={{ color: INK_FADE }}>
-                        {s.detail}
-                      </span>
-                    )}
-                  </span>
-                </button>
-                {i === 0 && !game.checks[0] && (
-                  <button onClick={() => setTab("lands")} className="rb-btn ml-9 mb-1 text-sm underline underline-offset-2" style={{ color: GOLD }}>
-                    → open your lands & muster
+                    <span className="text-xs italic shrink-0" style={{ color: isFocus ? GOLD : INK_FADE }}>
+                      {status}
+                    </span>
                   </button>
-                )}
-                {i === 1 && !game.checks[1] && (
-                  <button onClick={() => setTab("battle")} className="rb-btn ml-9 mb-1 text-sm underline underline-offset-2" style={{ color: GOLD }}>
-                    → open the battleground
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      </Panel>
-
-      {ending && endRoll && (
-        <Panel className="text-center" style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
-          <div className="rb-display text-[11px] tracking-[0.3em] uppercase mb-2" style={{ color: GOLD_BRIGHT }}>
-            {atDoom ? "At the Crack of Doom" : `Leaving ${current.name}`}
-          </div>
-          <Die value={endRoll.value} rolling={endRoll.rolling} size={56} />
-          {!endRoll.rolling && (
-            <div className="rb-display text-lg font-bold mt-2" style={{ color: endRoll.value >= 4 ? GOLD_BRIGHT : "#cdbf9d" }}>
-              {endRoll.value >= 4 ? (atDoom ? "It is done!" : "The Fellowship presses on!") : atDoom ? "The Ring endures…" : "Held fast…"}
-            </div>
-          )}
+                </li>
+              );
+            })}
+          </ol>
         </Panel>
-      )}
 
-      <BigButton tone={allDone ? "gold" : "ink"} onClick={endTurn} disabled={ending}>
-        {ending
-          ? "The dice tumble…"
-          : game.ringDestroyed
-          ? "End turn"
-          : atDoom
-          ? "End turn — roll to destroy the Ring"
-          : needsRoll
-          ? `End turn — roll to leave ${current.name}`
-          : "End turn — the Fellowship moves"}
-      </BigButton>
+        <div className="mb-4">{endTurnBlock}</div>
 
-      <div className="mt-4">
-        <DiceRoller />
+        <Disclosure title="Cast the dice">
+          <DiceRoller bare />
+        </Disclosure>
+
+        {game.players.length > 2 && (
+          <Disclosure title="A player was knocked out?">
+            <p className="text-sm mb-2" style={{ color: INK_FADE }}>
+              When an army's last battalion falls, mark them here — the turn order skips them.
+            </p>
+            <div className="space-y-1">
+              {game.players.map((p, i) => (
+                <FlagToggle
+                  key={i}
+                  label={`${p.name}${p.eliminated ? " — eliminated" : ""}`}
+                  value={!!p.eliminated}
+                  onChange={(v) => {
+                    if (v && !window.confirm(`Mark ${p.name} as eliminated? Their conqueror takes their Territory cards (Adventure cards are discarded). If that puts the victor at 5+ cards, they must trade sets immediately.`)) return;
+                    setPlayer(i, { eliminated: v });
+                  }}
+                />
+              ))}
+            </div>
+            {active.length === 1 && (
+              <p className="rb-display text-sm font-bold mt-3" style={{ color: GOLD }}>
+                Only {active[0].name} still stands — Middle-earth is conquered!
+              </p>
+            )}
+          </Disclosure>
+        )}
       </div>
 
-      {game.players.length > 2 && (
-        <Panel className="mt-4">
-          <PanelTitle sub="When an army's last battalion falls, mark them here — the turn order skips them.">
-            The fallen
-          </PanelTitle>
-          <div className="space-y-2">
-            {game.players.map((p, i) => (
-              <FlagToggle
-                key={i}
-                label={`${p.name}${p.eliminated ? " — eliminated" : ""}`}
-                value={!!p.eliminated}
-                onChange={(v) => {
-                  if (v && !window.confirm(`Mark ${p.name} as eliminated? Their conqueror takes their Territory cards (Adventure cards are discarded). If that puts the victor at 5+ cards, they must trade sets immediately.`)) return;
-                  setPlayer(i, { eliminated: v });
-                }}
-              />
-            ))}
+      {/* ——— Right: the workspace for the current step ——— */}
+      <div className="rb-col md:pl-1" ref={workspaceRef}>
+        <Panel style={{ borderTop: `4px solid ${GOLD}` }}>
+          <div className="rb-display text-[11px] tracking-[0.3em] uppercase" style={{ color: GOLD }}>
+            Step {focus + 1} of {TURN_STEPS.length}
           </div>
-          {active.length === 1 && (
-            <p className="rb-display text-sm font-bold mt-3" style={{ color: GOLD }}>
-              Only {active[0].name} still stands — Middle-earth is conquered!
-            </p>
-          )}
+          <h2 className="rb-display text-2xl md:text-3xl font-bold tracking-wide leading-tight mt-0.5" style={{ color: INK }}>
+            {step.title}
+          </h2>
+          <p className="text-lg md:text-xl leading-snug mt-2" style={{ color: isSkipped(step) ? INK_FADE : INK }}>
+            {isSkipped(step) ? step.skipText : step.kid}
+          </p>
         </Panel>
+
+        {step.key === "reinforce" && (
+          <ReinforceWorkspace game={game} player={player} muster={muster} setTradeIn={setTradeIn} openPicker={() => setPicker("paint")} />
+        )}
+        {step.key === "combat" && (
+          <CombatWorkspace game={game} update={update} openPicker={() => setPicker("conquer")} />
+        )}
+        {step.key === "fortify" && (
+          <Panel>
+            <ul className="text-base space-y-2" style={{ color: INK }}>
+              <li>• Pick one land to move from and one to move to.</li>
+              <li>• Every land between them must be yours.</li>
+              <li>• Move as many battalions as you like, but leave at least 1 behind.</li>
+              <li>• Only one move. You can also skip this step.</li>
+            </ul>
+          </Panel>
+        )}
+        {step.key === "territoryCard" && game.conquered && (
+          <Panel>
+            <p className="text-base" style={{ color: INK }}>
+              Just one card, even if you won more than one land.
+              {game.taken?.length > 0 && (
+                <>
+                  {" "}
+                  Lands you took this turn: <b>{game.taken.join(", ")}</b>.
+                </>
+              )}
+            </p>
+            <p className="text-sm mt-2" style={{ color: INK_FADE }}>
+              The Red Book adds the card to your hand count when you end your turn.
+            </p>
+          </Panel>
+        )}
+        {step.key === "adventureCard" && game.siteOfPower && (
+          <Panel>
+            <ul className="text-base space-y-2" style={{ color: INK }}>
+              <li>• Only 1 Adventure card per turn.</li>
+              <li>• Got an Event card? Do what it says right now, then draw again.</li>
+              <li>• You can only hold 4 Adventure cards. Too many? Discard down to 4.</li>
+            </ul>
+          </Panel>
+        )}
+        {step.key === "leader" && (
+          <Panel>
+            <ul className="text-base space-y-2" style={{ color: INK }}>
+              <li>• You start with 2 Leaders. A Leader is lost when the last battalion with it is defeated.</li>
+              <li>• If you have zero Leaders on the board, put one back in any land you own.</li>
+              <li>• Still have a Leader? Nothing to do — tap Done.</li>
+            </ul>
+          </Panel>
+        )}
+        {step.key === "fellowship" && (
+          <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
+            <div className="rb-display text-[11px] tracking-[0.3em] uppercase" style={{ color: GOLD_BRIGHT }}>
+              The Ring now lies in
+            </div>
+            <div className="rb-display text-2xl font-bold" style={{ color: "#f6ecd4" }}>
+              {game.ringDestroyed ? "the fires of Mount Doom" : current.name}
+            </div>
+            <div className="text-base mt-1" style={{ color: "#cdbf9d" }}>
+              {ringLine}
+            </div>
+            {game.conquered && (
+              <div className="text-sm mt-2 pt-2" style={{ color: GOLD_BRIGHT, borderTop: "1px solid rgba(233,194,92,0.3)" }}>
+                +1 Territory card goes into {player.name}'s hand when the turn ends.
+              </div>
+            )}
+          </Panel>
+        )}
+
+        {/* Step navigation */}
+        <div className="rb-stepnav grid grid-cols-3 gap-2 mb-4">
+          <button
+            onClick={goBack}
+            disabled={focus === 0}
+            className="rb-btn rb-display rounded-sm font-bold tracking-widest uppercase text-sm py-3 md:py-3.5"
+            style={{ border: `1px solid ${LINE}`, color: INK, background: PAPER, opacity: focus === 0 ? 0.35 : 1 }}
+          >
+            ◀ Back
+          </button>
+          <div className="col-span-2">
+            {step.auto ? (
+              endTurnBlock
+            ) : (
+              <BigButton onClick={goNext}>{isSkipped(step) ? "Skip ▶" : "Done ▶ next step"}</BigButton>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {picker && (
+        <TerritoryPicker game={game} update={update} playerIdx={game.currentPlayer} mode={picker} onClose={() => setPicker(null)} />
       )}
+
+      {ending && endRoll && (
+        <div className="rb-backdrop">
+          <div className="text-center rounded-sm px-6 py-6" style={{ background: "rgba(43,32,20,0.96)", border: `1px solid ${GOLD}`, maxWidth: 460, width: "100%" }}>
+            <div className="rb-display text-xs tracking-[0.3em] uppercase mb-3" style={{ color: GOLD_BRIGHT }}>
+              {atDoom ? "At the Crack of Doom" : `The Fellowship tries to leave ${current.name}`}
+            </div>
+            <Die value={endRoll.value} rolling={endRoll.rolling} size={96} />
+            {endRoll.rolling ? (
+              <div className="text-base mt-4" style={{ color: "#cdbf9d" }}>The die tumbles… a 4, 5 or 6 moves it on.</div>
+            ) : (
+              <>
+                <div className="rb-display text-2xl font-bold mt-4 leading-tight" style={{ color: endRoll.ok ? GOLD_BRIGHT : "#cdbf9d" }}>{endRoll.title}</div>
+                <div className="text-base mt-2 leading-snug" style={{ color: "#f6ecd4" }}>{endRoll.detail}</div>
+                <div className="mt-5">
+                  <BigButton onClick={closeRoll}>Done</BigButton>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReinforceWorkspace({ game, player, muster, setTradeIn, openPicker }) {
+  const mustTrade = (player.cards || 0) >= 5;
+  if (!muster.mapped || muster.count === 0) {
+    return (
+      <Panel style={{ background: "rgba(142,47,33,0.08)", border: `1px dashed ${WAX}` }}>
+        <p className="text-base" style={{ color: INK }}>
+          The map doesn't show any lands for <b>{player.name}</b> yet, so the Red Book can't count your reinforcements.
+        </p>
+        <p className="text-sm mt-1 mb-3" style={{ color: INK_FADE }}>
+          Mark the lands you own once. After that, use "I conquered a land" in the Attack step to keep it up to date.
+        </p>
+        <BigButton tone="wax" onClick={openPicker}>
+          Mark my lands
+        </BigButton>
+        <p className="text-sm mt-3" style={{ color: INK_FADE }}>
+          Or count by hand: lands ÷ 3 (at least 3), plus bonuses for whole regions, plus card sets.
+        </p>
+      </Panel>
+    );
+  }
+  return (
+    <>
+      <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
+        {muster.strongholds.length > 0 && (
+          <div className="pb-3 mb-3" style={{ borderBottom: "1px solid rgba(233,194,92,0.3)" }}>
+            <div className="rb-display text-[11px] tracking-[0.25em] uppercase" style={{ color: GOLD_BRIGHT }}>
+              First
+            </div>
+            <div className="text-lg leading-snug" style={{ color: "#f6ecd4" }}>
+              Put <b style={{ color: GOLD_BRIGHT }}>1 battalion</b> in each of your{" "}
+              <b style={{ color: GOLD_BRIGHT }}>
+                {muster.strongholds.length} stronghold{muster.strongholds.length === 1 ? "" : "s"}
+              </b>
+              :
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {muster.strongholds.map((t) => (
+                <span key={t.name} className="text-sm px-2 py-1 rounded-sm" style={{ background: "rgba(233,194,92,0.18)", color: "#f6ecd4", border: "1px solid rgba(233,194,92,0.4)" }}>
+                  ⌂ {t.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="rb-display text-[11px] tracking-[0.25em] uppercase" style={{ color: GOLD_BRIGHT }}>
+          {muster.strongholds.length > 0 ? "Then" : "Now"}
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="rb-display text-6xl md:text-7xl font-black leading-none" style={{ color: GOLD_BRIGHT }}>
+            {muster.total}
+          </div>
+          <div className="text-lg leading-snug" style={{ color: "#f6ecd4" }}>
+            battalions to place
+            <div className="text-sm" style={{ color: "#cdbf9d" }}>
+              anywhere you own
+            </div>
+          </div>
+        </div>
+        <ul className="text-sm mt-3 space-y-1" style={{ color: "#cdbf9d" }}>
+          <li>
+            <b style={{ color: "#f6ecd4" }}>{muster.base}</b> for your {muster.count} land{muster.count === 1 ? "" : "s"} (÷ 3, at least 3)
+          </li>
+          {muster.regions.length > 0 && (
+            <li>
+              <b style={{ color: "#f6ecd4" }}>+{muster.regionTotal}</b> for ruling all of {muster.regions.map((r) => `${r.name} (+${r.bonus})`).join(", ")}
+            </li>
+          )}
+          {muster.cardTotal > 0 && (
+            <li>
+              <b style={{ color: "#f6ecd4" }}>+{muster.cardTotal}</b> for card sets
+            </li>
+          )}
+        </ul>
+      </Panel>
+
+      <Panel style={mustTrade ? { border: `1.5px solid ${WAX}` } : {}}>
+        <PanelTitle sub="Trading a set takes 3 cards out of your hand and adds battalions above.">
+          {mustTrade ? "You MUST trade a set now" : "Trade in card sets"}
+        </PanelTitle>
+        <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-x-6 md:gap-y-2">
+          {CARD_SETS.map((c) => (
+            <div key={c.label} className="flex items-center justify-between gap-3">
+              <span className="text-base">
+                {c.label}{" "}
+                <span className="rb-display text-sm font-bold" style={{ color: GOLD }}>
+                  = {c.value}
+                </span>
+              </span>
+              <Stepper value={(game.tradeIns || {})[c.label] || 0} onChange={(v) => setTradeIn(c.label, v)} max={4} />
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      <button onClick={openPicker} className="rb-btn text-sm underline underline-offset-2 mb-4 px-1" style={{ color: GOLD }}>
+        Map looks wrong? Fix {player.name}'s lands
+      </button>
+    </>
+  );
+}
+
+function CombatWorkspace({ game, update, openPicker }) {
+  return (
+    <>
+      <BattlePanel />
+      <Panel style={{ borderLeft: `4px solid ${GOLD}` }}>
+        <div className="md:flex md:items-center md:justify-between md:gap-4">
+          <div className="mb-2 md:mb-0">
+            <div className="rb-display text-base font-bold tracking-wide">Won a land?</div>
+            <div className="text-sm" style={{ color: INK_FADE }}>
+              Beat the last defender? Tap this and pick the land on the board. It updates the map and your card.
+            </div>
+            {game.taken?.length > 0 && (
+              <div className="text-sm mt-1" style={{ color: GOLD }}>
+                Taken this turn: <b>{game.taken.join(", ")}</b>
+              </div>
+            )}
+          </div>
+          <div className="md:w-64 shrink-0">
+            <BigButton onClick={openPicker}>⚑ I conquered a land</BigButton>
+          </div>
+        </div>
+        <div className="mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
+          <FlagToggle label="A Leader took a Site of Power" value={game.siteOfPower} onChange={(v) => update({ siteOfPower: v })} />
+          {!game.taken?.length && (
+            <div className="mt-1">
+              <FlagToggle label="Conquered a land (mark by hand)" value={game.conquered} onChange={(v) => update({ conquered: v })} />
+            </div>
+          )}
+        </div>
+      </Panel>
+      <Disclosure title="Combat at a glance">
+        <ul className="text-base space-y-1.5" style={{ color: INK }}>
+          <li>• You need at least 2 battalions to attack — 1 always stays home.</li>
+          <li>• Attacker rolls up to 3 dice, defender up to 2. Ties go to the defender.</li>
+          <li>• Conquered the territory? Battalions that fought must move in; Leaders move with them.</li>
+          <li>• If a defender's last battalion falls, any Leader there is removed too.</li>
+          <li>• Eliminate a player: take their Territory cards (Adventure cards are discarded).</li>
+        </ul>
+      </Disclosure>
     </>
   );
 }
@@ -1295,17 +1885,23 @@ function DiceEntry({ count, values, onPick, tone }) {
     <div className="space-y-2">
       {[...Array(count)].map((_, i) => (
         <div key={i} className="flex items-center gap-2">
-          <span className="rb-display text-base w-10 shrink-0 text-center" style={{ color: tone }} title="a die">
+          <button
+            onClick={() => onPick(i, rollDie())}
+            className="rb-btn rb-display text-2xl w-10 shrink-0 text-center rounded-sm self-stretch"
+            style={{ color: tone, border: `1px dashed ${LINE}`, background: "rgba(255,250,235,0.4)" }}
+            title="No dice handy? Tap to roll this one"
+            aria-label="roll this die"
+          >
             ⚄
-          </span>
+          </button>
           <div className="grid grid-cols-6 gap-1 flex-1">
             {[1, 2, 3, 4, 5, 6].map((v) => (
               <button
                 key={v}
                 onClick={() => onPick(i, v)}
-                className="rb-btn rb-display py-2 rounded-sm text-base font-bold"
+                className="rb-btn rb-display py-2.5 md:py-3 rounded-sm text-lg font-bold"
                 style={{
-                  background: values[i] === v ? tone : "rgba(255,250,235,0.7)",
+                  background: values[i] === v ? tone : PAPER,
                   color: values[i] === v ? "#f6ecd4" : INK,
                   border: `1px solid ${LINE}`,
                 }}
@@ -1320,7 +1916,7 @@ function DiceEntry({ count, values, onPick, tone }) {
   );
 }
 
-function BattleScreen() {
+function BattlePanel() {
   const [attCount, setAttCount] = useState(3);
   const [defCount, setDefCount] = useState(2);
   const [att, setAtt] = useState([0, 0, 0]);
@@ -1350,75 +1946,78 @@ function BattleScreen() {
     setResult(null);
   };
 
+  const countBtn = (n, on, onClick, bg, fg) => (
+    <button
+      key={n}
+      onClick={onClick}
+      className="rb-btn rb-display w-11 h-11 rounded-sm text-lg font-bold"
+      style={{ background: on ? bg : PAPER, color: on ? fg : INK, border: `1px solid ${LINE}` }}
+    >
+      {n}
+    </button>
+  );
+
   return (
     <>
       <Panel>
-        <PanelTitle sub="Roll your real dice, tap in what they show (order doesn't matter), and the ledger settles it — highest vs highest, every bonus applied, ties to the defender.">
+        <PanelTitle sub="Roll your real dice, then tap what they show. The book sorts them, adds every bonus, and gives ties to the defender.">
           The battleground
         </PanelTitle>
 
-        <div className="mb-4">
-          <div className="rb-display text-sm font-bold tracking-wide mb-1" style={{ color: WAX }}>
-            ⚔ Attacker
+        <div className="md:grid md:grid-cols-2 md:gap-5">
+          <div className="mb-4 md:mb-0">
+            <div className="rb-display text-base font-bold tracking-wide mb-1" style={{ color: WAX }}>
+              ⚔ Attacker
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm" style={{ color: INK_FADE }}>
+                Dice:
+              </span>
+              {[1, 2, 3].map((n) =>
+                countBtn(
+                  n,
+                  attCount === n,
+                  () => {
+                    setAttCount(n);
+                    setResult(null);
+                  },
+                  WAX,
+                  "#f6ecd4"
+                )
+              )}
+            </div>
+            <DiceEntry count={attCount} values={att} tone={WAX} onPick={(i, v) => { const n = att.slice(); n[i] = v; setAtt(n); setResult(null); buzz(8); }} />
+            <div className="mt-2">
+              <FlagToggle label="Leader attacking (+1 to highest die)" value={attLeader} onChange={(v) => { setAttLeader(v); setResult(null); }} />
+            </div>
           </div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm" style={{ color: INK_FADE }}>
-              Battalions sent (dice):
-            </span>
-            {[1, 2, 3].map((n) => (
-              <button
-                key={n}
-                onClick={() => {
-                  setAttCount(n);
-                  setResult(null);
-                }}
-                className="rb-btn rb-display w-9 h-9 rounded-sm font-bold"
-                style={{
-                  background: attCount === n ? WAX : "rgba(255,250,235,0.7)",
-                  color: attCount === n ? "#f6ecd4" : INK,
-                  border: `1px solid ${LINE}`,
-                }}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <DiceEntry count={attCount} values={att} tone={WAX} onPick={(i, v) => { const n = att.slice(); n[i] = v; setAtt(n); setResult(null); buzz(8); }} />
-          <div className="mt-2">
-            <FlagToggle label="Leader fights with the attackers (+1 highest die)" value={attLeader} onChange={(v) => { setAttLeader(v); setResult(null); }} />
-          </div>
-        </div>
 
-        <div className="pt-4" style={{ borderTop: `1px dashed ${LINE}` }}>
-          <div className="rb-display text-sm font-bold tracking-wide mb-1" style={{ color: INK }}>
-            🛡 Defender
-          </div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm" style={{ color: INK_FADE }}>
-              Battalions defending (dice):
-            </span>
-            {[1, 2].map((n) => (
-              <button
-                key={n}
-                onClick={() => {
-                  setDefCount(n);
-                  setResult(null);
-                }}
-                className="rb-btn rb-display w-9 h-9 rounded-sm font-bold"
-                style={{
-                  background: defCount === n ? INK : "rgba(255,250,235,0.7)",
-                  color: defCount === n ? GOLD_BRIGHT : INK,
-                  border: `1px solid ${LINE}`,
-                }}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <DiceEntry count={defCount} values={def} tone={INK} onPick={(i, v) => { const n = def.slice(); n[i] = v; setDef(n); setResult(null); buzz(8); }} />
-          <div className="mt-2 space-y-2">
-            <FlagToggle label="Leader defends (+1 highest die)" value={defLeader} onChange={(v) => { setDefLeader(v); setResult(null); }} />
-            <FlagToggle label="Defending a stronghold (+1 highest die)" value={defStronghold} onChange={(v) => { setDefStronghold(v); setResult(null); }} />
+          <div className="rb-def-col pt-4 md:pt-0 md:pl-5" style={{ borderTop: `1px dashed ${LINE}` }}>
+            <div className="rb-display text-base font-bold tracking-wide mb-1" style={{ color: INK }}>
+              🛡 Defender
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm" style={{ color: INK_FADE }}>
+                Dice:
+              </span>
+              {[1, 2].map((n) =>
+                countBtn(
+                  n,
+                  defCount === n,
+                  () => {
+                    setDefCount(n);
+                    setResult(null);
+                  },
+                  INK,
+                  GOLD_BRIGHT
+                )
+              )}
+            </div>
+            <DiceEntry count={defCount} values={def} tone={INK} onPick={(i, v) => { const n = def.slice(); n[i] = v; setDef(n); setResult(null); buzz(8); }} />
+            <div className="mt-2 space-y-1">
+              <FlagToggle label="Leader defending (+1 to highest die)" value={defLeader} onChange={(v) => { setDefLeader(v); setResult(null); }} />
+              <FlagToggle label="Defending a stronghold ⌂ (+1 to highest die)" value={defStronghold} onChange={(v) => { setDefStronghold(v); setResult(null); }} />
+            </div>
           </div>
         </div>
 
@@ -1436,9 +2035,19 @@ function BattleScreen() {
 
       {result && (
         <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
-          <div className="space-y-2 mb-3">
+          <div className="text-center pb-3 mb-3" style={{ borderBottom: "1px solid rgba(233,194,92,0.3)" }}>
+            <div className="rb-display text-2xl md:text-3xl font-black leading-tight" style={{ color: GOLD_BRIGHT }}>
+              {result.attLoss > 0 && `Attacker removes ${result.attLoss}`}
+              {result.attLoss > 0 && result.defLoss > 0 && " · "}
+              {result.defLoss > 0 && `Defender removes ${result.defLoss}`}
+            </div>
+            <div className="text-sm mt-1" style={{ color: "#cdbf9d" }}>
+              battalion{result.attLoss + result.defLoss === 1 ? "" : "s"} off the board
+            </div>
+          </div>
+          <div className="space-y-1.5">
             {result.pairs.map((p, i) => (
-              <div key={i} className="flex items-center justify-between text-[15px]" style={{ color: "#cdbf9d" }}>
+              <div key={i} className="flex items-center justify-between text-base" style={{ color: "#cdbf9d" }}>
                 <span>
                   <span className="rb-display text-[10px] uppercase tracking-wider mr-2" style={{ color: "#9a8a66" }}>
                     {i === 0 ? "highest" : i === 1 ? "second" : "third"}
@@ -1453,47 +2062,18 @@ function BattleScreen() {
               </div>
             ))}
           </div>
-          <div className="text-center pt-3" style={{ borderTop: "1px solid rgba(233,194,92,0.3)" }}>
-            <div className="rb-display text-xl font-black" style={{ color: GOLD_BRIGHT }}>
-              {result.attLoss > 0 && `Attacker removes ${result.attLoss}`}
-              {result.attLoss > 0 && result.defLoss > 0 && " · "}
-              {result.defLoss > 0 && `Defender removes ${result.defLoss}`}
-            </div>
-            <div className="text-sm mt-1" style={{ color: "#cdbf9d" }}>
-              battalion{result.attLoss + result.defLoss === 1 ? "" : "s"} from the battleground
-            </div>
-          </div>
         </Panel>
       )}
-
-      <Panel>
-        <PanelTitle>Combat at a glance</PanelTitle>
-        <ul className="text-[15px] space-y-1.5" style={{ color: INK }}>
-          <li>• You need at least 2 battalions to attack — 1 always stays home.</li>
-          <li>• Conquered the territory? Battalions that fought must move in; Leaders move with them.</li>
-          <li>• If a defender's last battalion falls, any Leader there is removed too.</li>
-          <li>• Eliminate a player: take their Territory cards (Adventure cards are discarded).</li>
-        </ul>
-      </Panel>
     </>
   );
 }
 
-// ———— Lands: ownership map + live reinforcement muster ————
-function regionOwner(game, regionName) {
-  // returns the player index that owns EVERY territory in the region, else null
-  const terrs = game.territories.filter((t) => t.region === regionName);
-  if (!terrs.length) return null;
-  const first = game.owners[terrs[0].name];
-  if (first === undefined) return null;
-  return terrs.every((t) => game.owners[t.name] === first) ? first : null;
-}
-
+// ———— Lands: the board photo + live reinforcement muster ————
 function LandsScreen({ game, update }) {
-  const [brush, setBrush] = useState(game.currentPlayer);
-  const [sets, setSets] = useState({});
   const [edit, setEdit] = useState(false);
   const [collapsed, setCollapsed] = useState({});
+  const [toast, setToast] = useState(null);
+  const [hot, setHot] = useState(null);
 
   const facOf = (i) => {
     if (i === undefined || i === null || i < 0 || i >= game.players.length) return null;
@@ -1502,27 +2082,27 @@ function LandsScreen({ game, update }) {
   };
   const ownerHex = (i) => (i === undefined || i < 0 ? null : facOf(i)?.hex);
 
+  // Each tap steps the land through nobody -> each player (skipping the fallen) -> nobody.
   const paint = (name) => {
     const owners = { ...game.owners };
-    if (brush === -1) delete owners[name];
-    else owners[name] = brush;
+    const order = game.players.map((p, i) => (p.eliminated ? -1 : i)).filter((i) => i >= 0);
+    const was = owners[name];
+    const at = was === undefined ? -1 : order.indexOf(was);
+    const next = at + 1 < order.length ? order[at + 1] : undefined;
+    if (next === undefined) {
+      delete owners[name];
+      setToast(`${name} — nobody's.`);
+    } else {
+      owners[name] = next;
+      setToast(`${name} is ${game.players[next].name}'s.`);
+    }
+    setHot(name);
     buzz(6);
     update({ owners });
   };
 
-  // current player's live muster
   const me = game.currentPlayer;
-  const myTerrs = game.territories.filter((t) => game.owners[t.name] === me);
-  const myCount = myTerrs.length;
-  const base = myCount > 0 ? Math.max(3, Math.floor(myCount / 3)) : 0;
-  const myStrongholds = myTerrs.filter((t) => t.s).length;
-  const myRegions = REGIONS.filter((r) => regionOwner(game, r.name) === me);
-  const regionTotal = myRegions.reduce((sum, r) => {
-    const idx = REGIONS.findIndex((x) => x.name === r.name);
-    return sum + game.regionBonuses[idx];
-  }, 0);
-  const cardTotal = CARD_SETS.reduce((sum, c) => sum + (sets[c.label] || 0) * c.value, 0);
-  const total = base + regionTotal + cardTotal;
+  const muster = musterFor(game, me, game.tradeIns);
 
   // editing helpers
   const setTerr = (idx, patch) =>
@@ -1552,196 +2132,170 @@ function LandsScreen({ game, update }) {
   const meFac = facOf(me);
 
   return (
-    <>
-      <Panel>
-        <PanelTitle sub="Tap a territory to mark its owner. Pick a banner below first — it defaults to whoever's turn it is.">
-          The map of holdings
-        </PanelTitle>
-        <div className="flex flex-wrap gap-1.5">
-          {game.players.map((p, i) => {
-            const fac = facOf(i);
-            return (
-              <button
-                key={i}
-                onClick={() => setBrush(i)}
-                className="rb-btn text-xs px-2 py-1.5 rounded-sm flex items-center gap-1.5"
-                style={{
-                  background: brush === i ? fac.hex : "rgba(255,250,235,0.7)",
-                  color: brush === i ? "#f6ecd4" : INK,
-                  border: `1px solid ${brush === i ? fac.hex : LINE}`,
-                  opacity: p.eliminated ? 0.5 : 1,
-                }}
-              >
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: fac.hex, border: "1px solid rgba(0,0,0,0.3)" }} />
-                {p.name}
-              </button>
-            );
-          })}
-          <button
-            onClick={() => setBrush(-1)}
-            className="rb-btn text-xs px-2 py-1.5 rounded-sm"
-            style={{
-              background: brush === -1 ? INK : "rgba(255,250,235,0.7)",
-              color: brush === -1 ? GOLD_BRIGHT : INK,
-              border: `1px solid ${LINE}`,
-            }}
-          >
-            ◌ neutral / clear
-          </button>
+    <div className="rb-lands w-full md:flex md:gap-4 md:items-start">
+      <div className="text-center md:shrink-0">
+        <BoardMap territories={game.territories} ownerOf={ownerLookup(game)} onTap={paint} highlight={hot} maxHeight="var(--lands-map-h)" />
+        <div className="text-sm mt-1 mb-3 h-5" style={{ color: INK_FADE }}>
+          {toast || "Tap a land to pass it to the next player."}
         </div>
-      </Panel>
-
-      {/* Live muster for the current player */}
-      <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
-        <div className="flex items-center justify-between mb-1">
-          <span className="rb-display text-[11px] tracking-[0.25em] uppercase" style={{ color: GOLD_BRIGHT }}>
-            {mePlayer?.name}'s muster
-          </span>
-          <span className="w-3 h-3 rounded-full" style={{ background: meFac?.hex }} />
-        </div>
-        <div className="flex items-baseline gap-3">
-          <div className="rb-display text-5xl font-black" style={{ color: GOLD_BRIGHT }}>
-            {total}
-          </div>
-          <div className="text-sm" style={{ color: "#cdbf9d" }}>
-            battalions
-            <div className="text-xs">
-              {base} land ({myCount} terr.) · {regionTotal} regions · {cardTotal} cards
-            </div>
-          </div>
-        </div>
-        {myStrongholds > 0 && (
-          <div className="mt-2 pt-2 text-[15px]" style={{ borderTop: "1px solid rgba(233,194,92,0.3)", color: GOLD_BRIGHT }}>
-            ⌂ + place 1 battalion in each of your <b>{myStrongholds} strongholds</b>
-          </div>
-        )}
-        {myRegions.length > 0 && (
-          <div className="mt-1 text-sm" style={{ color: "#cdbf9d" }}>
-            Whole regions ruled: {myRegions.map((r) => r.name).join(", ")}
-          </div>
-        )}
-      </Panel>
-
-      {/* Territory card trade-ins */}
-      <Panel>
-        <PanelTitle sub="Add any sets you're cashing in. Lower your hand count on the Turn page by 3 per set.">
-          Card trade-ins
-        </PanelTitle>
-        <div className="space-y-2">
-          {CARD_SETS.map((c) => (
-            <div key={c.label} className="flex items-center justify-between gap-3">
-              <span className="text-[15px]">
-                {c.label} <span className="rb-display text-sm font-bold" style={{ color: GOLD }}>= {c.value}</span>
-              </span>
-              <Stepper value={sets[c.label] || 0} onChange={(v) => setSets((x) => ({ ...x, [c.label]: v }))} max={4} />
-            </div>
-          ))}
-        </div>
-      </Panel>
-
-      {/* The regions */}
-      <div className="flex items-center justify-between mb-2 px-1">
-        <span className="rb-display text-sm font-bold tracking-widest uppercase" style={{ color: INK }}>
-          The nine regions
-        </span>
-        <button onClick={() => setEdit(!edit)} className="rb-btn text-xs underline underline-offset-2" style={{ color: INK_FADE }}>
-          {edit ? "done editing" : "edit lands"}
-        </button>
       </div>
 
-      {REGIONS.map((r, ri) => {
-        const terrs = game.territories.map((t, idx) => ({ ...t, idx })).filter((t) => t.region === r.name);
-        const owner = regionOwner(game, r.name);
-        const ownerFac = facOf(owner);
-        const isOpen = !collapsed[r.name];
-        return (
-          <Panel key={r.name} style={{ borderLeft: ownerFac ? `4px solid ${ownerFac.hex}` : `1px solid ${LINE}`, paddingBottom: isOpen ? undefined : 12 }}>
-            <button onClick={() => setCollapsed((c) => ({ ...c, [r.name]: !c[r.name] }))} className="rb-btn w-full flex items-center justify-between text-left">
-              <span className="rb-display text-sm font-bold tracking-wide">
-                {r.name}{" "}
-                <span className="text-xs font-normal" style={{ color: INK_FADE }}>
-                  ({terrs.length}) · +{game.regionBonuses[ri]}
+      <div className="md:flex-1 md:min-w-0">
+        <Panel>
+          <PanelTitle sub="Tap a land on the board. Each tap passes it to the next player; after the last player it goes back to nobody.">The map of holdings</PanelTitle>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base" style={{ color: INK }}>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full" style={{ border: `2px dashed ${INK_FADE}` }} /> nobody</span>
+            {game.players.filter((p) => !p.eliminated).map((p, i) => {
+              const fac = FACTIONS.find((f) => f.id === p.faction);
+              return (
+                <span key={i} className="flex items-center gap-1">
+                  <span style={{ color: INK_FADE }}>→</span>
+                  <span className="inline-block w-3.5 h-3.5 rounded-full" style={{ background: fac.hex, border: "1.5px solid #fff6d5", boxShadow: "0 0 0 1px rgba(43,32,20,0.5)" }} />
+                  {p.name}
                 </span>
-              </span>
-              {ownerFac ? (
-                <span className="rb-display text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm" style={{ background: ownerFac.hex, color: "#f6ecd4" }}>
-                  {game.players[owner].name} rules
-                </span>
-              ) : (
-                <span className="text-xs" style={{ color: INK_FADE }}>
-                  {isOpen ? "▾" : "▸"}
-                </span>
-              )}
-            </button>
+              );
+            })}
+            <span style={{ color: INK_FADE }}>→ nobody</span>
+          </div>
+        </Panel>
 
-            {isOpen && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {terrs.map((t) => {
-                  const o = game.owners[t.name];
-                  const hex = ownerHex(o);
-                  if (edit) {
-                    return (
-                      <div key={t.idx} className="flex items-center gap-1 w-full">
-                        <input
-                          value={t.name}
-                          onChange={(e) => renameTerr(t.idx, e.target.value)}
-                          className="flex-1 min-w-0 px-2 py-1 rounded-sm text-sm"
-                          style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.9)" }}
-                        />
-                        <button onClick={() => setTerr(t.idx, { s: !t.s })} className="rb-btn w-8 shrink-0 text-base" style={{ opacity: t.s ? 1 : 0.3 }} title="stronghold">
-                          ⌂
-                        </button>
-                        <select
-                          value={t.region}
-                          onChange={(e) => setTerr(t.idx, { region: e.target.value })}
-                          className="px-1 py-1 rounded-sm text-xs shrink-0"
-                          style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.9)", maxWidth: 90 }}
-                        >
-                          {REGIONS.map((rr) => (
-                            <option key={rr.name} value={rr.name}>{rr.name}</option>
-                          ))}
-                        </select>
-                        <button onClick={() => removeTerr(t.idx)} className="rb-btn w-6 shrink-0 text-sm" style={{ color: WAX }}>
-                          ✕
-                        </button>
-                      </div>
-                    );
-                  }
-                  return (
-                    <button
-                      key={t.idx}
-                      onClick={() => paint(t.name)}
-                      className="rb-btn text-xs px-2 py-1.5 rounded-sm flex items-center gap-1"
-                      style={{
-                        background: hex || "rgba(255,250,235,0.7)",
-                        color: hex ? "#f6ecd4" : INK,
-                        border: `1px solid ${hex || LINE}`,
-                      }}
-                    >
-                      {t.s && <span title="stronghold" style={{ opacity: 0.85 }}>⌂</span>}
-                      {t.name}
-                    </button>
-                  );
-                })}
-                {edit && (
-                  <button onClick={() => addTerr(r.name)} className="rb-btn text-xs underline underline-offset-2 mt-1" style={{ color: GOLD }}>
-                    + add territory
-                  </button>
-                )}
+        {/* Live muster for the current player */}
+        <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="rb-display text-[11px] tracking-[0.25em] uppercase" style={{ color: GOLD_BRIGHT }}>
+              {mePlayer?.name}'s muster
+            </span>
+            <span className="w-3 h-3 rounded-full" style={{ background: meFac?.hex }} />
+          </div>
+          <div className="flex items-baseline gap-3">
+            <div className="rb-display text-5xl font-black" style={{ color: GOLD_BRIGHT }}>
+              {muster.total}
+            </div>
+            <div className="text-sm" style={{ color: "#cdbf9d" }}>
+              battalions
+              <div className="text-xs">
+                {muster.base} land ({muster.count} terr.) · {muster.regionTotal} regions · {muster.cardTotal} cards
               </div>
-            )}
-          </Panel>
-        );
-      })}
+            </div>
+          </div>
+          {muster.strongholds.length > 0 && (
+            <div className="mt-2 pt-2 text-base" style={{ borderTop: "1px solid rgba(233,194,92,0.3)", color: GOLD_BRIGHT }}>
+              ⌂ + 1 battalion in each of <b>{muster.strongholds.length} strongholds</b>
+            </div>
+          )}
+          {muster.regions.length > 0 && (
+            <div className="mt-1 text-sm" style={{ color: "#cdbf9d" }}>
+              Whole regions ruled: {muster.regions.map((r) => r.name).join(", ")}
+            </div>
+          )}
+          <div className="text-xs mt-2" style={{ color: "#9a8a66" }}>
+            Card sets are traded in on the Turn page, step 1.
+          </div>
+        </Panel>
 
-      <Panel style={{ background: "rgba(43,32,20,0.05)", borderStyle: "dashed" }}>
-        <p className="text-sm" style={{ color: INK_FADE }}>
-          These 64 territories and their regions were reconstructed from your gameboard — the per-region counts match
-          the rulebook exactly, but a few names or groupings may need a tweak. Tap <b>edit lands</b> to rename, move a
-          territory to another region, mark strongholds, or add/remove. Your changes are saved.
-        </p>
-      </Panel>
-    </>
+        <div className="rounded-sm mb-4" style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.4)" }}>
+          <div className="flex items-center justify-between px-4 py-3">
+            <button onClick={() => setCollapsed((c) => ({ ...c, __all: !c.__all }))} className="rb-btn flex-1 text-left rb-display text-sm font-bold tracking-widest uppercase" style={{ color: INK }}>
+              The nine regions {collapsed.__all ? "▸" : "▾"}
+            </button>
+            <button onClick={() => { setEdit(!edit); setCollapsed((c) => ({ ...c, __all: false })); }} className="rb-btn text-xs underline underline-offset-2" style={{ color: INK_FADE }}>
+              {edit ? "done editing" : "edit lands"}
+            </button>
+          </div>
+          {!collapsed.__all && (
+            <div className="px-4 pb-4">
+              {REGIONS.map((r, ri) => {
+                const terrs = game.territories.map((t, idx) => ({ ...t, idx })).filter((t) => t.region === r.name);
+                const owner = regionOwner(game, r.name);
+                const ownerFac = facOf(owner);
+                const isOpen = !collapsed[r.name];
+                return (
+                  <div key={r.name} className="mb-3 pl-2" style={{ borderLeft: ownerFac ? `4px solid ${ownerFac.hex}` : `2px solid ${LINE}` }}>
+                    <button onClick={() => setCollapsed((c) => ({ ...c, [r.name]: !c[r.name] }))} className="rb-btn w-full flex items-center justify-between text-left">
+                      <span className="rb-display text-sm font-bold tracking-wide">
+                        {r.name}{" "}
+                        <span className="text-xs font-normal" style={{ color: INK_FADE }}>
+                          ({terrs.length}) · +{game.regionBonuses[ri]}
+                        </span>
+                      </span>
+                      {ownerFac ? (
+                        <span className="rb-display text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm" style={{ background: ownerFac.hex, color: "#f6ecd4" }}>
+                          {game.players[owner].name} rules
+                        </span>
+                      ) : (
+                        <span className="text-xs" style={{ color: INK_FADE }}>
+                          {isOpen ? "▾" : "▸"}
+                        </span>
+                      )}
+                    </button>
+
+                    {isOpen && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {terrs.map((t) => {
+                          const o = game.owners[t.name];
+                          const hex = ownerHex(o);
+                          if (edit) {
+                            return (
+                              <div key={t.idx} className="flex items-center gap-1 w-full">
+                                <input
+                                  value={t.name}
+                                  onChange={(e) => renameTerr(t.idx, e.target.value)}
+                                  className="flex-1 min-w-0 px-2 py-1 rounded-sm text-sm"
+                                  style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.9)" }}
+                                />
+                                <button onClick={() => setTerr(t.idx, { s: !t.s })} className="rb-btn w-8 shrink-0 text-base" style={{ opacity: t.s ? 1 : 0.3 }} title="stronghold">
+                                  ⌂
+                                </button>
+                                <select
+                                  value={t.region}
+                                  onChange={(e) => setTerr(t.idx, { region: e.target.value })}
+                                  className="px-1 py-1 rounded-sm text-xs shrink-0"
+                                  style={{ border: `1px solid ${LINE}`, background: "rgba(255,250,235,0.9)", maxWidth: 90 }}
+                                >
+                                  {REGIONS.map((rr) => (
+                                    <option key={rr.name} value={rr.name}>{rr.name}</option>
+                                  ))}
+                                </select>
+                                <button onClick={() => removeTerr(t.idx)} className="rb-btn w-6 shrink-0 text-sm" style={{ color: WAX }}>
+                                  ✕
+                                </button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <button
+                              key={t.idx}
+                              onClick={() => paint(t.name)}
+                              className="rb-btn text-sm px-2.5 py-1.5 rounded-sm flex items-center gap-1"
+                              style={{
+                                background: hex || PAPER,
+                                color: hex ? "#f6ecd4" : INK,
+                                border: `1px solid ${hex || LINE}`,
+                              }}
+                            >
+                              {t.s && <span title="stronghold" style={{ opacity: 0.85 }}>⌂</span>}
+                              {t.name}
+                            </button>
+                          );
+                        })}
+                        {edit && (
+                          <button onClick={() => addTerr(r.name)} className="rb-btn text-xs underline underline-offset-2 mt-1" style={{ color: GOLD }}>
+                            + add territory
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-xs" style={{ color: INK_FADE }}>
+                Names match the board. A renamed or added land has no spot on the photo until it's given one, but still works from these lists.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1801,7 +2355,7 @@ function RingScreen({ game, update, setTab }) {
         </Panel>
       ) : (
         <Panel>
-          <p className="text-[15px]" style={{ color: INK }}>
+          <p className="text-base" style={{ color: INK }}>
             The Fellowship moves automatically when the current player taps <b>End turn</b>. Need to correct the
             board?{" "}
           </p>
@@ -1833,7 +2387,7 @@ function RingScreen({ game, update, setTab }) {
         </div>
         <ol className="space-y-1">
           {path.map((p, i) => (
-            <li key={i} className="flex items-center gap-2 text-[15px]">
+            <li key={i} className="flex items-center gap-2 text-base">
               <span className="rb-display w-6 text-right text-xs font-bold shrink-0" style={{ color: i === ringStep ? GOLD : INK_FADE }}>
                 {i + 1}.
               </span>
@@ -1875,7 +2429,7 @@ function RingScreen({ game, update, setTab }) {
       <Panel>
         <FlagToggle label="Hunt for the Ring (Team Risk variant)" value={game.huntRule} onChange={(v) => update({ huntRule: v })} />
         {game.huntRule && (
-          <p className="text-[15px] mt-2 leading-snug" style={{ color: INK }}>
+          <p className="text-base mt-2 leading-snug" style={{ color: INK }}>
             When the Ring sits in an <b>evil-held territory</b> at the end of a turn, that player rolls 2 dice:{" "}
             <b>+1</b> with a Leader there, <b>+1</b> if evil rules the whole region. A total of <b>12 or more</b> means
             the Ring is found — <b>Sauron wins at once.</b>
@@ -1955,7 +2509,7 @@ function PalantirScreen() {
       <div className="rb-display text-base font-bold tracking-wide mb-1" style={{ color: INK }}>
         {entry.q}
       </div>
-      <p className="text-[15px] leading-snug" style={{ color: INK }}>
+      <p className="text-base leading-snug" style={{ color: INK }}>
         {entry.a}
       </p>
     </Panel>
@@ -2014,7 +2568,7 @@ function PalantirScreen() {
           </>
         ) : (
           <Panel style={{ background: "rgba(43,32,20,0.05)", borderStyle: "dashed" }}>
-            <p className="text-[15px] italic" style={{ color: INK_FADE }}>
+            <p className="text-base italic" style={{ color: INK_FADE }}>
               The stone is clouded — try different words, or browse the lore below by topic.
             </p>
           </Panel>
@@ -2056,12 +2610,12 @@ function PalantirScreen() {
                     <span className="rb-display text-sm shrink-0" style={{ color: GOLD }}>
                       {open ? "▾" : "▸"}
                     </span>
-                    <span className="rb-display text-[15px] font-bold tracking-wide" style={{ color: INK }}>
+                    <span className="rb-display text-base font-bold tracking-wide" style={{ color: INK }}>
                       {e.q}
                     </span>
                   </button>
                   {open && (
-                    <p className="text-[15px] leading-snug mt-2 pl-6" style={{ color: INK }}>
+                    <p className="text-base leading-snug mt-2 pl-6" style={{ color: INK }}>
                       {e.a}
                     </p>
                   )}
@@ -2081,11 +2635,23 @@ function PalantirScreen() {
   );
 }
 
+
 // ———— Scoring ————
+// Rows start filled in from the map; only Adventure-card points need typing.
+function scoreRowFromMap(game, i) {
+  const mine = game.territories.filter((t) => game.owners[t.name] === i);
+  const regions = {};
+  REGIONS.forEach((reg) => {
+    if (regionOwner(game, reg.name) === i) regions[reg.name] = true;
+  });
+  return { territories: mine.length, strongholds: mine.filter((t) => t.s).length, regions, adventure: 0 };
+}
+
 function ScoreScreen({ game }) {
-  const [rows, setRows] = useState(game.players.map(() => ({ territories: 0, strongholds: 0, regions: {}, adventure: 0 })));
+  const [rows, setRows] = useState(() => game.players.map((_, i) => scoreRowFromMap(game, i)));
 
   const setRow = (i, patch) => setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const recount = () => setRows((rs) => rs.map((r, i) => ({ ...scoreRowFromMap(game, i), adventure: r.adventure })));
 
   const scoreOf = (r) =>
     r.territories +
@@ -2097,82 +2663,108 @@ function ScoreScreen({ game }) {
   const best = Math.max(...scores);
 
   return (
-    <>
+    <div className="max-w-5xl mx-auto w-full">
+      {game.ringDestroyed && (
+        <Panel className="doom-shake" style={{ background: "rgba(43,32,20,0.94)", border: `1px solid ${GOLD}`, position: "relative", overflow: "hidden" }}>
+          {[...Array(9)].map((_, i) => (
+            <span key={i} className="ember" style={{ left: `${8 + i * 10.5}%`, bottom: 8, animationDelay: `${i * 0.16}s` }} />
+          ))}
+          <div className="text-center py-2">
+            <div className="rb-display text-xs tracking-[0.35em] uppercase" style={{ color: EMBER }}>Mount Doom</div>
+            <div className="rb-display text-3xl md:text-4xl font-black mt-1 leading-tight" style={{ color: GOLD_BRIGHT }}>The Ring Has Been Destroyed!</div>
+            <div className="text-base mt-2" style={{ color: "#f6ecd4" }}>The war is over. Count the spoils — the highest score rules Middle-earth.</div>
+          </div>
+        </Panel>
+      )}
       <Panel>
-        <PanelTitle sub="When the Ring is destroyed, count the spoils.">The reckoning</PanelTitle>
-        <ul className="text-[15px] space-y-1" style={{ color: INK }}>
-          <li>• 1 point per territory held</li>
-          <li>• 2 points per stronghold held</li>
-          <li>• Each fully-ruled region: points equal to its battalion bonus</li>
-          <li>
-            • Points printed on Adventure cards you have <b>played</b> (not cards in hand)
-          </li>
-        </ul>
+        <div className="md:flex md:items-start md:justify-between md:gap-4">
+          <div>
+            <PanelTitle sub="When the Ring is destroyed, count the spoils.">The reckoning</PanelTitle>
+            <ul className="text-base space-y-1" style={{ color: INK }}>
+              <li>• 1 point per territory held</li>
+              <li>• 2 points per stronghold held</li>
+              <li>• Each fully-ruled region: points equal to its battalion bonus</li>
+              <li>
+                • Points printed on Adventure cards you have <b>played</b> (not cards in hand)
+              </li>
+            </ul>
+          </div>
+          <div className="mt-3 md:mt-0 md:w-64 shrink-0">
+            <BigButton tone="ink" small onClick={recount}>
+              Recount from the map
+            </BigButton>
+            <p className="text-xs mt-1 text-center" style={{ color: INK_FADE }}>
+              Territories, strongholds and regions come from the Lands map. Type in Adventure points.
+            </p>
+          </div>
+        </div>
       </Panel>
 
-      {game.players.map((p, i) => {
-        const fac = FACTIONS.find((f) => f.id === p.faction);
-        const r = rows[i];
-        const regionPts = REGIONS.reduce((s, reg, ri) => s + (r.regions[reg.name] ? game.regionBonuses[ri] : 0), 0);
-        return (
-          <Panel key={i} style={{ borderLeft: `4px solid ${fac.hex}`, opacity: p.eliminated ? 0.55 : 1 }}>
-            <div className="flex items-baseline justify-between mb-3">
-              <span className="rb-display text-lg font-bold">
-                {p.name}
-                {p.eliminated && (
-                  <em className="text-sm font-normal ml-2" style={{ color: WAX, fontFamily: "'EB Garamond', serif" }}>
-                    fallen
-                  </em>
-                )}
-              </span>
-              <span className="rb-display text-3xl font-black" style={{ color: scores[i] === best && best > 0 ? GOLD : INK }}>
-                {scores[i]}
-              </span>
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[15px]">Territories (×1)</span>
-                <Stepper value={r.territories} onChange={(v) => setRow(i, { territories: v })} max={64} />
+      <div className="md:grid md:grid-cols-2 md:gap-4 md:items-start">
+        {game.players.map((p, i) => {
+          const fac = FACTIONS.find((f) => f.id === p.faction);
+          const r = rows[i];
+          const regionPts = REGIONS.reduce((s, reg, ri) => s + (r.regions[reg.name] ? game.regionBonuses[ri] : 0), 0);
+          return (
+            <Panel key={i} style={{ borderLeft: `4px solid ${fac.hex}`, opacity: p.eliminated ? 0.55 : 1 }}>
+              <div className="flex items-baseline justify-between mb-3">
+                <span className="rb-display text-lg font-bold">
+                  {p.name}
+                  {p.eliminated && (
+                    <em className="text-sm font-normal ml-2" style={{ color: WAX, fontFamily: "'EB Garamond', serif" }}>
+                      fallen
+                    </em>
+                  )}
+                </span>
+                <span className="rb-display text-3xl font-black" style={{ color: scores[i] === best && best > 0 ? GOLD : INK }}>
+                  {scores[i]}
+                </span>
               </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[15px]">Strongholds (×2)</span>
-                <Stepper value={r.strongholds} onChange={(v) => setRow(i, { strongholds: v })} max={20} />
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[15px]">Adventure card points</span>
-                <Stepper value={r.adventure} onChange={(v) => setRow(i, { adventure: v })} max={50} />
-              </div>
-              <div>
-                <div className="text-[15px] mb-1">
-                  Whole regions ruled{" "}
-                  <span className="rb-display text-sm font-bold" style={{ color: GOLD }}>
-                    (+{regionPts})
-                  </span>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-base">Territories (×1)</span>
+                  <Stepper value={r.territories} onChange={(v) => setRow(i, { territories: v })} max={64} />
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {REGIONS.map((reg, ri) => {
-                    const on = !!r.regions[reg.name];
-                    return (
-                      <button
-                        key={reg.name}
-                        onClick={() => setRow(i, { regions: { ...r.regions, [reg.name]: !on } })}
-                        className="rb-btn text-xs px-2 py-1 rounded-sm"
-                        style={{
-                          background: on ? GOLD : "rgba(255,250,235,0.7)",
-                          color: on ? "#f6ecd4" : INK,
-                          border: `1px solid ${on ? GOLD : LINE}`,
-                        }}
-                      >
-                        {reg.name} +{game.regionBonuses[ri]}
-                      </button>
-                    );
-                  })}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-base">Strongholds (×2)</span>
+                  <Stepper value={r.strongholds} onChange={(v) => setRow(i, { strongholds: v })} max={20} />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-base">Adventure card points</span>
+                  <Stepper value={r.adventure} onChange={(v) => setRow(i, { adventure: v })} max={50} />
+                </div>
+                <div>
+                  <div className="text-base mb-1">
+                    Whole regions ruled{" "}
+                    <span className="rb-display text-sm font-bold" style={{ color: GOLD }}>
+                      (+{regionPts})
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {REGIONS.map((reg, ri) => {
+                      const on = !!r.regions[reg.name];
+                      return (
+                        <button
+                          key={reg.name}
+                          onClick={() => setRow(i, { regions: { ...r.regions, [reg.name]: !on } })}
+                          className="rb-btn text-xs px-2 py-1.5 rounded-sm"
+                          style={{
+                            background: on ? GOLD : PAPER,
+                            color: on ? "#f6ecd4" : INK,
+                            border: `1px solid ${on ? GOLD : LINE}`,
+                          }}
+                        >
+                          {reg.name} +{game.regionBonuses[ri]}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          </Panel>
-        );
-      })}
+            </Panel>
+          );
+        })}
+      </div>
 
       {best > 0 && (
         <Panel style={{ background: "rgba(43,32,20,0.92)", border: `1px solid ${GOLD}` }}>
@@ -2181,6 +2773,6 @@ function ScoreScreen({ game }) {
           </p>
         </Panel>
       )}
-    </>
+    </div>
   );
 }

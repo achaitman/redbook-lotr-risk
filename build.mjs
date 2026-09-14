@@ -45,12 +45,13 @@ console.log(`\nBuilt ${out}/ (cache stamp ${hash})`);
 if (process.argv.includes("--serve")) {
   const { createServer } = await import("node:http");
   const { readFile } = await import("node:fs/promises");
-  const types = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", webmanifest: "application/manifest+json", png: "image/png", svg: "image/svg+xml", woff2: "font/woff2" };
+  const types = { html: "text/html", js: "text/javascript", css: "text/css", json: "application/json", webmanifest: "application/manifest+json", png: "image/png", webp: "image/webp", svg: "image/svg+xml", woff2: "font/woff2" };
   createServer(async (req, res) => {
     let p = decodeURIComponent(req.url.split("?")[0]);
     if (p === "/") p = "/index.html";
     try {
-      const data = await readFile(join(out, p));
+      // dev-only: also serve tools/ (anchor editor) and src/ (so the editor can import mapData.js)
+      const data = await readFile(join(out, p)).catch(() => readFile(join(".", p)));
       res.writeHead(200, { "Content-Type": types[p.split(".").pop()] || "application/octet-stream" });
       res.end(data);
     } catch {

@@ -1,7 +1,7 @@
 const CACHE = "redbook-__BUILD__";
 const ASSETS = [
   "./", "./index.html", "./app.js", "./styles.css", "./fonts.css", "./manifest.webmanifest",
-  "./icon-192.png", "./icon-512.png",
+  "./icon-192.png", "./icon-512.png", "./board.webp",
   "./fonts/cinzel-latin-700-normal.woff2", "./fonts/cinzel-latin-900-normal.woff2",
   "./fonts/eb-garamond-latin-400-normal.woff2", "./fonts/eb-garamond-latin-600-normal.woff2",
   "./fonts/eb-garamond-latin-400-italic.woff2"
