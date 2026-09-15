@@ -25,7 +25,7 @@ export const MAP_ANCHORS = {
   "South Downs": [[480, 507]],
   "Angmar": [[555, 175]],
   "Eastern Angmar": [[690, 110]],
-  "Carn Dûm": [[555, 68]],
+  "Forodwaith": [[555, 68], [760, 42]], // Carn Dûm is a place inside Forodwaith
   "Rhudaur": [[620, 320], [640, 385]],
   // Rohan
   "Minhiriath": [[320, 650], [300, 730]],
@@ -58,13 +58,13 @@ export const MAP_ANCHORS = {
   // Gondor
   "Druwaith Iaur": [[300, 1160]],
   "Vale of Erech": [[440, 1190]],
-  "Anfalas": [[350, 1290], [250, 1290]],
+  "Anfalas": [[350, 1290]],
+  "Andrast": [[235, 1300]],
   "Lamedon": [[525, 1230]],
-  "Belfalas": [[540, 1300]],
-  "Dol Amroth": [[485, 1345]],
+  "Belfalas": [[540, 1300], [485, 1345]], // Dol Amroth is a place inside Belfalas
   "Lebennin": [[615, 1250], [600, 1310]],
   "Minas Tirith": [[640, 1165]],
-  "Osgiliath": [[735, 1250]],
+  "Ithilien": [[735, 1250]], // Osgiliath is a place inside Ithilien
   "South Ithilien": [[745, 1335]],
   // Mordor
   "Udûn Vale": [[830, 1140]],

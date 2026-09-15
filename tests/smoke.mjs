@@ -41,6 +41,13 @@ const check = (name, ok) => { console.log(`${ok ? "✓" : "✗"} ${name}`); if (
 await wait(300);
 check("setup screen mounts", body().includes("Muster the players"));
 click(find("3")); await wait(120);
+check("setup: phased checklist with names in it", body().includes("Pick your armies") && body().includes("Deal the cards") && body().includes("0 of ") && body().includes("Player 1 takes the Yellow army") && body().includes("Player 2 and Player 3 each get 8 Evil cards"));
+click(find("Take your soldiers")); await wait(120);
+check("setup: ticking a step advances the progress line", body().includes("1 of "));
+click(find("Show me which lands")); await wait(120);
+check("setup: Show me opens the shield map", body().includes("The three kinds of land") && doc().querySelector(".rb-modal [data-boardmap]"));
+click(modalBtn("Done")); await wait(120);
+check("setup: shield map closes", !body().includes("The three kinds of land"));
 click(find("Begin the war")); await wait(150);
 
 for (const [tab, marker] of [["Turn", "now marching"], ["Lands", "map of holdings"], ["Ring", "journey"], ["Score", "reckoning"], ["Stone", "Palantír"]]) {
@@ -69,6 +76,10 @@ check("muster: region bonus explained", body().includes("ruling all of Rhûn"));
 // Done ▶ advances to step 2 (Attack) with the battleground inline
 click(find("Done ▶")); await wait(120);
 check("turn: Done advances to step 2", body().includes("Step 2 of 7") && body().includes("battleground"));
+click(doc().querySelector("[data-battleground-toggle]")); await wait(120);
+check("battle: the battleground folds away for real-dice play", !find("Fight!") && body().includes("Folded away") && body().includes("Won a land?"));
+click(doc().querySelector("[data-battleground-toggle]")); await wait(120);
+check("battle: the battleground opens again", !!find("Fight!"));
 
 // Battle math: att 6,4,1 vs def 5,4 + stronghold -> attacker removes 2
 const grids = () => [...doc().querySelectorAll(".grid-cols-6.gap-1")];
@@ -134,13 +145,14 @@ check("lands: the Ring marker moves with the Fellowship", body().includes("The R
 // Saved games from before the board photo get their territory names migrated (let the first app flush its debounced save first)
 await wait(600);
 store["redbook-lotr-risk-v4"] = JSON.stringify({ screen: "play", playerCount: 2, players: [{ name: "A", faction: "yellow" }, { name: "B", faction: "red" }],
-  territories: [{ name: "Essaroth", region: "Rhûn" }, { name: "Udun", region: "Mordor", s: true }, { name: "Dagorlad", region: "Rhovanion" }], owners: { Essaroth: 0, Udun: 1, Dagorlad: 0 }, tab: "lands" });
+  territories: [{ name: "Essaroth", region: "Rhûn" }, { name: "Udun", region: "Mordor", s: true }, { name: "Dagorlad", region: "Rhovanion" }, { name: "Osgiliath", region: "Gondor" }], owners: { Essaroth: 0, Udun: 1, Dagorlad: 0, Osgiliath: 1 }, tab: "lands" });
 const dom2 = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { url: "https://example.com/", runScripts: "outside-only", pretendToBeVisual: true });
 Object.defineProperty(dom2.window, "localStorage", { value: fakeStorage }); dom2.window.scrollTo = () => {}; dom2.window.HTMLElement.prototype.scrollTo = () => {};
 dom2.window.eval(js); await wait(300);
 const chips = [...dom2.window.document.querySelectorAll("button")].map((b) => b.textContent.trim().replace(/^⌂\s*/, ""));
 check("migration: old names become board names", chips.includes("Esgaroth") && chips.includes("Udûn Vale") && !chips.includes("Essaroth"));
 check("migration: Dagorlad is dropped", !chips.includes("Dagorlad"));
+check("migration: places become their territory (Osgiliath -> Ithilien)", chips.includes("Ithilien") && !chips.includes("Osgiliath") && chips.includes("Forodwaith") && chips.includes("Andrast"));
 check("migration: lands missing from an old save are added", chips.includes("North Rhûn") && chips.includes("Rhûn Hills"));
 
 // 2-player start: Good lands to the Free Peoples player, Evil lands to Sauron
@@ -155,8 +167,21 @@ const boot = (storage, rig) => {
 };
 const g3 = boot(fakeStorage3); await wait(300);
 click(g3.find("2")); await wait(120);
+{
+  const sel = g3.d.window.document.querySelectorAll("select");
+  Object.getOwnPropertyDescriptor(g3.d.window.HTMLSelectElement.prototype, "value").set.call(sel[1], "green");
+  sel[1].dispatchEvent(new g3.d.window.Event("change", { bubbles: true })); await wait(120);
+  check("2-player: picking the same side flips the other player", g3.body().includes("Player 2 takes the Green army") && (g3.body().includes("Player 1 takes the Red army")));
+  Object.getOwnPropertyDescriptor(g3.d.window.HTMLSelectElement.prototype, "value").set.call(sel[1], "red");
+  sel[1].dispatchEvent(new g3.d.window.Event("change", { bubbles: true })); await wait(120);
+  Object.getOwnPropertyDescriptor(g3.d.window.HTMLSelectElement.prototype, "value").set.call(sel[0], "yellow");
+  sel[0].dispatchEvent(new g3.d.window.Event("change", { bubbles: true })); await wait(120);
+}
+check("2-player: neutral army defaults to an unused colour", g3.body().includes("How the Green army works") && g3.body().includes("Put 2 Green battalions") && g3.body().includes("Count out 21 Neutral cards"));
 click(g3.find("Begin the war")); await wait(200);
-check("2-player: Free Peoples start on 16 Good lands", g3.body().includes("for your 16 lands") && g3.body().includes("Eriador (+3)") && g3.body().includes("Rohan (+4)"));
+check("2-player: Free Peoples start on the 16 Good-card lands", g3.body().includes("for your 16 lands") && g3.body().includes("4 strongholds") && g3.body().includes("⌂ Minas Tirith"));
+const cardsBox = [...g3.d.window.document.querySelectorAll("div")].find((d) => d.textContent.trim() === "Territory cards in hand")?.parentElement?.parentElement;
+check("2-player: each player starts with 1 Territory card in hand", cardsBox && cardsBox.querySelector(".w-14")?.textContent.trim() === "1");
 
 // Ring at Mount Doom: the roll stays on screen until Done, then a destroyed Ring goes to the scores
 await wait(600);

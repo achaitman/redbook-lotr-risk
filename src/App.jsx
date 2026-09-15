@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import BoardMap from "./BoardMap.jsx";
 
 // ———— Game data: Risk LOTR Trilogy Edition (verified vs. rulebook + gameboard) ————
@@ -42,7 +42,7 @@ const DEFAULT_TERRITORIES = [
   { name: "Borderlands", region: "Arnor" },
   { name: "Angmar", region: "Arnor" },
   { name: "Eastern Angmar", region: "Arnor" },
-  { name: "Carn Dûm", region: "Arnor" },
+  { name: "Forodwaith", region: "Arnor" },
   { name: "Rhudaur", region: "Arnor", s: true },
   // Rohan (7)
   { name: "Eregion", region: "Rohan" },
@@ -74,14 +74,14 @@ const DEFAULT_TERRITORIES = [
   { name: "South Rhûn", region: "Rhûn" },
   // Gondor (10)
   { name: "Minas Tirith", region: "Gondor", s: true },
-  { name: "Osgiliath", region: "Gondor" },
+  { name: "Ithilien", region: "Gondor" },
   { name: "South Ithilien", region: "Gondor" },
   { name: "Lebennin", region: "Gondor" },
   { name: "Belfalas", region: "Gondor" },
   { name: "Lamedon", region: "Gondor" },
   { name: "Vale of Erech", region: "Gondor" },
   { name: "Anfalas", region: "Gondor" },
-  { name: "Dol Amroth", region: "Gondor" },
+  { name: "Andrast", region: "Gondor" },
   { name: "Druwaith Iaur", region: "Gondor" },
   // Mordor (6)
   { name: "Udûn Vale", region: "Mordor", s: true },
@@ -100,7 +100,7 @@ const DEFAULT_TERRITORIES = [
 ];
 
 // Names that earlier versions of the app used before the board photo settled the spelling.
-const RENAMED_TERRITORIES = { Essaroth: "Esgaroth", Andrast: "Dol Amroth", Udun: "Udûn Vale" };
+const RENAMED_TERRITORIES = { Essaroth: "Esgaroth", Udun: "Udûn Vale", "Dol Amroth": "Andrast", "Carn Dûm": "Forodwaith", Osgiliath: "Ithilien" };
 // Printed on the board as a place inside another land, not a territory of its own.
 const REMOVED_TERRITORIES = ["Dagorlad"];
 const migrateNames = (saved) => {
@@ -125,12 +125,12 @@ const FACTIONS = [
 
 const START_BATTALIONS = { 2: 60, 3: 52, 4: 45 };
 
-// Territory-card sides for the 2-player setup: the Good player starts on the 16 Good-shield lands,
-// the Evil player on the 16 Evil-shield lands. Best guess from the board — check against your cards.
-const GOOD_TERRITORIES = ["The Shire", "Tower Hills", "Evendim Hills", "Lune Valley", "Forlindon", "Mithlond", "Harlindon",
-  "Eregion", "Dunland", "Enedwaith", "Minhiriath", "Fangorn", "Gap of Rohan", "West Rohan", "Lórien", "Rhudaur"];
-const EVIL_TERRITORIES = ["Udûn Vale", "Mount Doom", "Minas Morgul", "Gorgoroth", "Barad-dûr", "Nurn",
-  "Umbar", "Harondor", "Harad", "Near Harad", "Khand", "Deep Harad", "Withered Heath", "Esgaroth", "North Rhûn", "South Rhûn"];
+// Territory-card sides for the 2-player setup, read from the cards: the Good player starts on the
+// 16 Good-shield lands, the Evil player on the 16 Evil-shield lands; the other 32 are Neutral.
+const GOOD_TERRITORIES = ["Vale of Erech", "Anfalas", "Minas Tirith", "North Mirkwood", "Lórien", "Lamedon", "Fornost", "Lebennin",
+  "Belfalas", "The Wold", "West Rohan", "Rhudaur", "Gap of Rohan", "The Shire", "Evendim Hills", "Andrast"];
+const EVIL_TERRITORIES = ["Dead Marshes", "Moria", "Udûn Vale", "Eastern Angmar", "Gorgoroth", "Mount Doom", "South Mirkwood", "Withered Heath",
+  "Minas Morgul", "Fangorn", "Brown Lands", "Umbar", "Emyn Muil", "Deep Harad", "Eastern Mirkwood", "Barad-dûr"];
 const startingOwners2p = (players) => {
   const sideOf = (p) => FACTIONS.find((f) => f.id === p.faction)?.side;
   const good = players.findIndex((p) => sideOf(p) === "good");
@@ -205,43 +205,110 @@ const TURN_STEPS = [
   },
 ];
 
-const SETUP_2P = [
-  "One player takes a Good army, the other an Evil army. A third, neutral army uses one of the two unused colours. Each player takes 60 battalions and 2 Leaders.",
-  "Remove the 2 wild cards. Separate the Territory cards into Good, Evil and Neutral decks; shuffle each.",
-  "Deal: Good player takes the 16 Good cards. Evil player takes the 16 Evil cards. The neutral army gets 21 Neutral cards.",
-  "Each player places 1 battalion on each territory shown on their cards. Each neutral territory gets 2 neutral battalions (42 neutral battalions total).",
-  "Roll a die; the higher roll starts. Take turns placing 1 battalion into an unclaimed territory until every territory on the board is occupied.",
-  "Then alternate placing battalions into territories you already control until all 60 of your starting battalions are on the board.",
-  "Place Leaders in turn order: each player places 1 Leader, then each places their second (never 2 Leaders in one territory).",
-  "Shuffle all Territory cards back into one deck with the wild cards. Deal each player 1 Territory card. Remove the Event cards from the Adventure deck, deal 4 Adventure cards to each player, then shuffle the Events back in.",
-  "Place the One Ring in The Shire. Highest die roll goes first.",
-  "Neutral army rules: it never attacks or redeploys, never moves the Fellowship, and gets no Leaders or Adventure cards. When you attack it, the other player rolls its black defence dice.",
-];
-
-const SETUP_BY_COUNT = {
-  3: [
-    "Each army starts with 52 battalions.",
-    "One player is the Free Peoples; the other two play Sauron's forces.",
-    "Deal all 16 Good cards to the Free Peoples player. Each Sauron player gets 8 Evil cards and 8 Neutral cards.",
-  ],
-  4: [
-    "Each army starts with 45 battalions.",
-    "Two Free Peoples armies vs. two Sauron armies.",
-    "Each Good player gets 8 Good cards; each Evil player gets 8 Evil cards. The remaining territories are claimed during the draft.",
-    "Optional: play Alliance Risk or Team Risk (rulebook pages 18–19).",
-  ],
+// ———— Setting the board: a phased, kid-worded checklist built from the players' names and colours ————
+const factionOf = (p) => FACTIONS.find((f) => f.id === p.faction) || FACTIONS[0];
+const colourName = (f) => f.label.split(" — ")[0];
+// 2-player game: the neutral army is one of the two unused colours (the players pick which one)
+const neutralFactionFor = (game) => {
+  const used = new Set((game.players || []).map((p) => p.faction));
+  const free = FACTIONS.filter((f) => !used.has(f.id));
+  return free.find((f) => f.id === game.neutralFaction) || free[0] || null;
 };
+function Name({ p }) {
+  const f = factionOf(p);
+  return (
+    <b className="whitespace-nowrap" style={{ color: f.hex }}>
+      <span className="inline-block w-3 h-3 rounded-full mr-1" style={{ background: f.hex, border: "1px solid rgba(43,32,20,0.4)", verticalAlign: "-1px" }} />
+      {p.name}
+    </b>
+  );
+}
+function Names({ ps, fallback }) {
+  if (!ps.length) return <b>{fallback}</b>;
+  return ps.map((p, i) => (
+    <Fragment key={i}>
+      {i > 0 && (i === ps.length - 1 ? " and " : ", ")}
+      <Name p={p} />
+    </Fragment>
+  ));
+}
+function Army({ f }) {
+  return <b style={{ color: f.hex }}>{colourName(f)}</b>;
+}
 
-const SETUP_COMMON = [
-  "Remove the 2 wild cards. Sort Territory cards into Good (grey shield), Evil (black shield) and Neutral piles; shuffle each.",
-  "Deal Territory cards (see your player count below) and place 1 battalion on each territory you were dealt.",
-  "Shuffle all Territory cards back together with the wild cards.",
-  "Take turns placing 1 battalion in an empty territory until all 64 are claimed.",
-  "Take turns adding 1 battalion at a time to your own territories until everyone is out.",
-  "Place Leaders in turn order: each player places 1 Leader, then each places their second (never 2 Leaders in one territory).",
-  "Deal each player 1 Territory card. Remove the Event cards from the Adventure deck, deal 4 Adventure cards to each player, then shuffle the Events back into the deck.",
-  "Place the One Ring in The Shire. Highest die roll goes first.",
-];
+// Each phase: title, "need" chips (the numbers that matter), and steps of one action each (title + kid sentence).
+// Step keys are the tick ids saved in game.setupTicks.
+const setupPhases = (game) => {
+  const n = game.playerCount;
+  const ps = game.players || [];
+  const good = ps.filter((p) => factionOf(p).side === "good");
+  const evil = ps.filter((p) => factionOf(p).side === "evil");
+  const Good = <Names ps={good} fallback="the Free Peoples player" />;
+  const Evil = <Names ps={evil} fallback="Sauron's player" />;
+  const neutral = n === 2 ? neutralFactionFor(game) : null;
+  const N = neutral ? <Army f={neutral} /> : "neutral";
+  const bat = START_BATTALIONS[n];
+  const each = ps.length > 2 ? "each get" : "gets";
+
+  const armies = {
+    key: "armies", title: "Pick your armies", need: [`${bat} battalions each`, "2 Leaders each"],
+    steps: [
+      { key: "take", title: "Take your soldiers", kid: (
+        <>
+          {ps.map((p, i) => <Fragment key={i}><Name p={p} /> takes the <Army f={factionOf(p)} /> army. </Fragment>)}
+          Count out {bat} battalions each: a little soldier is 1, a rider is 3, a big creature is 5.
+        </>
+      ) },
+      neutral && { key: "neutral", title: <>The {N} army belongs to nobody</>, kid: "Put it within reach. It only sits on the board and defends. (Change which colour is neutral above, in The armies.)" },
+      { key: "leaders-take", title: "Take your 2 Leaders", kid: "Each player takes the 2 Leaders of their colour." },
+    ].filter(Boolean),
+  };
+
+  const deal = n === 2
+    ? <>{Good} gets all 16 Good cards. {Evil} gets all 16 Evil cards. Count out 21 Neutral cards for the {N} army. The 11 Neutral cards left over go face down to the side.</>
+    : n === 3
+    ? <>{Good} gets all 16 Good cards. {Evil} each get 8 Evil cards and 8 Neutral cards. The rest go face down to the side.</>
+    : <>{Good} {each} 8 Good cards. {Evil} {each} 8 Evil cards. The rest go face down to the side.</>;
+  const cards = {
+    key: "cards", title: "Deal the cards",
+    need: n === 2 ? ["16 Good", "16 Evil", "21 Neutral"] : n === 3 ? ["16 Good", "8 Evil + 8 Neutral each"] : ["8 Good each", "8 Evil each"],
+    steps: [
+      { key: "wild", title: "Take out the 2 wild cards", kid: "Put them to the side for now." },
+      { key: "sort", title: "Sort the Territory cards into 3 piles", kid: "Good shields, Evil shields and Neutral. Shuffle each pile.", show: true },
+      { key: "deal", title: "Deal the piles", kid: deal },
+    ],
+  };
+
+  const board = {
+    key: "board", title: "Fill the board", need: [],
+    steps: [
+      { key: "place-cards", title: "Put 1 battalion on each of your card lands", kid: "Look at your cards. Put 1 of your soldiers on every land you were dealt." },
+      neutral && { key: "place-neutral", title: <>Put 2 {N} battalions on every Neutral card land</>, kid: "That's 42 neutral soldiers in 21 lands." },
+      { key: "roll-place", title: "Roll to see who places first", kid: "Everyone rolls one die. Highest goes first. The dice are on this page." },
+      { key: "fill", title: "Fill the empty lands", kid: n === 2 ? "Take turns. Put 1 battalion in an empty land until all 11 empty lands are full." : "Take turns. Put 1 battalion in an empty land until all 64 lands have a soldier." },
+      { key: "rest", title: "Place the rest of your soldiers", kid: "Take turns adding 1 battalion to a land you own until everyone is out of soldiers." },
+    ].filter(Boolean),
+  };
+
+  const leaders = {
+    key: "leaders", title: "Leaders and cards", need: [],
+    steps: [
+      { key: "leaders", title: "Place your Leaders", kid: "Take turns: everyone puts 1 Leader in a land they own, then everyone places their second. Never 2 Leaders in one land." },
+      { key: "deck", title: "Shuffle the Territory cards back into one deck", kid: "Every pile and the 2 wild cards go in together. Deal 1 Territory card to each player." },
+      { key: "adventure", title: "Deal the Adventure cards", kid: "Take the Event cards out of the Adventure deck. Deal 4 Adventure cards to each player. Then shuffle the Events back in." },
+    ],
+  };
+
+  const ready = {
+    key: "ready", title: "Ready to march", need: [],
+    steps: [
+      { key: "ring", title: "Put the One Ring in The Shire", kid: "The Fellowship's journey starts there." },
+      { key: "first", title: "Roll for the first turn", kid: "Highest roll takes the first turn. Then press the gold button below." },
+    ],
+  };
+
+  return [armies, cards, board, leaders, ready];
+};
 
 // ———— Palantír: offline rules oracle (no network, no AI) ————
 const PALANTIR_KB = [
@@ -359,7 +426,7 @@ const PALANTIR_KB = [
   // Two-player
   { category: "Two-player", q: "How does the 2-player setup work?",
     keywords: ["two", "player", "setup", "neutral", "deal", "2"],
-    a: "One player is Good, one Evil; a third unused colour is the neutral army. Remove the wilds. Deal 16 Good cards to the Good player, 16 Evil to the Evil player, and 21 Neutral to the neutral army. Place 1 battalion on each of your card territories; each neutral territory gets 2 neutral battalions (42 total)." },
+    a: "One player is Good, one Evil; a third unused colour is the neutral army. Remove the wilds. Deal 16 Good cards to the Good player, 16 Evil to the Evil player, and 21 Neutral to the neutral army. Place 1 battalion on each of your card territories; each neutral territory gets 2 neutral battalions (42 total). After all battalions and Leaders are placed, shuffle the Territory cards back together and deal each player 1 card." },
   { category: "Two-player", q: "Which territories are unclaimed in the 2-player game?",
     keywords: ["unclaimed", "empty", "leftover", "claim", "two", "remaining", "territories", "2"],
     a: "The deck has 62 territory cards (64 minus the 2 wilds). Dealing 16 + 16 + 21 = 53 of them, so 11 territories have no card dealt — those are the unclaimed ones. After placing battalions, roll for first player and alternate placing 1 battalion into those 11 empties until all 64 are occupied. (One player ends with one extra — the rulebook says that's fine.)" },
@@ -461,6 +528,9 @@ const freshGame = () => ({
   lastTurn: null,
   territories: DEFAULT_TERRITORIES.map((t) => ({ ...t })),
   owners: {}, // territory name -> player index (absent = neutral)
+  neutralFaction: null, // 2-player: which unused colour is the neutral army (null = first unused)
+  setupTicks: {}, // setup checklist: step key -> ticked
+  battlegroundOpen: true, // the dice helper on the Attack step; fold it away to fight with real dice
 });
 
 const normalizePlayers = (players) =>
@@ -973,7 +1043,18 @@ function SetupScreen({ game, update }) {
   };
 
   const setPlayer = (i, patch) => {
-    update({ players: game.players.map((p, idx) => (idx === i ? { ...p, ...patch } : p)) });
+    let players = game.players.map((p, idx) => (idx === i ? { ...p, ...patch } : p));
+    // 2-player game: one side must be the Free Peoples and the other Sauron. If this pick puts both on
+    // the same side, flip the other player to the opposite side.
+    if (count === 2 && patch.faction) {
+      const side = factionOf(players[i]).side;
+      const other = 1 - i;
+      if (factionOf(players[other]).side === side) {
+        const flip = FACTIONS.find((f) => f.side !== side);
+        players = players.map((p, idx) => (idx === other ? { ...p, faction: flip.id } : p));
+      }
+    }
+    update({ players });
   };
 
   return (
@@ -1026,8 +1107,8 @@ function SetupScreen({ game, update }) {
                       <input
                         value={p.name}
                         onChange={(e) => setPlayer(i, { name: e.target.value })}
-                        className="flex-1 min-w-0 px-2 py-2 rounded-sm text-base"
-                        style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
+                        className="flex-1 min-w-0 px-2 py-2 rounded-sm text-base font-bold"
+                        style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: fac.hex }}
                       />
                       <select
                         value={p.faction}
@@ -1050,6 +1131,32 @@ function SetupScreen({ game, update }) {
                   In a 3-player game, one army is the Free Peoples and two serve Sauron.
                 </p>
               )}
+              {count === 2 && (() => {
+                const used = new Set(game.players.map((p) => p.faction));
+                const free = FACTIONS.filter((f) => !used.has(f.id));
+                const cur = neutralFactionFor(game);
+                return (
+                  <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: `1px dashed ${LINE}` }}>
+                    <span className="w-4 h-4 rounded-full shrink-0" style={{ background: cur ? cur.hex : "transparent", border: "1px solid rgba(0,0,0,0.3)" }} />
+                    <span className="flex-1 min-w-0 text-sm" style={{ color: INK_FADE }}>
+                      The neutral army (nobody's) is {cur ? <Army f={cur} /> : "—"}
+                    </span>
+                    <select
+                      value={cur ? cur.id : ""}
+                      onChange={(e) => update({ neutralFaction: e.target.value })}
+                      className="px-1 py-2 rounded-sm text-sm max-w-[40%]"
+                      style={{ background: "rgba(255,250,235,0.9)", border: `1px solid ${LINE}`, color: INK }}
+                      aria-label="neutral army colour"
+                    >
+                      {free.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {colourName(f)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
             </Panel>
           )}
           {count && <DiceRoller />}
@@ -1057,21 +1164,52 @@ function SetupScreen({ game, update }) {
 
         <div>
           {count && (
-            <Panel>
-              <PanelTitle sub="Tick each as the table is prepared.">Setting the board</PanelTitle>
-              <SetupChecklist items={count === 2 ? SETUP_2P : [...SETUP_BY_COUNT[count], ...SETUP_COMMON]} />
-            </Panel>
+            <>
+              <Panel>
+                <PanelTitle sub="Tick each step as you do it at the table.">Setting the board</PanelTitle>
+                <SetupChecklist game={game} update={update} />
+              </Panel>
+              {count === 2 && (() => {
+                const nf = neutralFactionFor(game);
+                return (
+                  <Panel>
+                    <PanelTitle sub="It belongs to nobody.">How the {nf ? colourName(nf) : "neutral"} army works</PanelTitle>
+                    <ul className="text-base space-y-1.5 pl-5 list-disc" style={{ color: INK }}>
+                      <li>It never attacks and never moves.</li>
+                      <li>It gets no Leaders and no Adventure cards.</li>
+                      <li>It never moves the Fellowship.</li>
+                      <li>When you attack it, the other player rolls its defence dice.</li>
+                    </ul>
+                  </Panel>
+                );
+              })()}
+              {count === 4 && (
+                <p className="text-sm mb-4 px-1 italic" style={{ color: INK_FADE }}>
+                  Optional for 4 players: Alliance Risk or Team Risk (rulebook pages 18–19).
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>
       {count === 2 && (
         <p className="text-sm mb-3 px-1" style={{ color: INK_FADE }}>
-          When the war begins, the Free Peoples' 16 Good lands and Sauron's 16 Evil lands are marked on the map for you. Mark the
-          unclaimed lands you draft afterwards (Lands tab, or "Mark my lands" in step 1).
+          When the war begins, the Free Peoples' 16 Good lands and Sauron's 16 Evil lands are marked on the map for you, and each
+          player starts with 1 Territory card in hand. Mark the unclaimed lands you draft afterwards (Lands tab, or "Mark my lands" in step 1).
         </p>
       )}
       {count && (
-        <BigButton onClick={() => update({ screen: "play", ...(count === 2 && !Object.keys(game.owners || {}).length ? { owners: startingOwners2p(game.players) } : {}) })}>
+        <BigButton
+          onClick={() =>
+            update({
+              screen: "play",
+              // 2-player deal: the Good/Evil card lands are marked for you and each player starts with 1 Territory card in hand
+              ...(count === 2 && !Object.keys(game.owners || {}).length
+                ? { owners: startingOwners2p(game.players), players: game.players.map((p) => ({ ...p, cards: 1 })) }
+                : {}),
+            })
+          }
+        >
           Begin the war
         </BigButton>
       )}
@@ -1079,24 +1217,120 @@ function SetupScreen({ game, update }) {
   );
 }
 
-function SetupChecklist({ items }) {
-  const [done, setDone] = useState({});
+function SetupChecklist({ game, update }) {
+  const [showSides, setShowSides] = useState(false);
+  const phases = setupPhases(game);
+  const ticks = game.setupTicks || {};
+  const all = phases.flatMap((ph) => ph.steps);
+  const done = all.filter((st) => ticks[st.key]).length;
+  const finished = done === all.length;
+  const toggle = (k) => {
+    buzz(6);
+    update({ setupTicks: { ...ticks, [k]: !ticks[k] } });
+  };
   return (
-    <ol className="space-y-2">
-      {items.map((t, i) => (
-        <li key={i}>
-          <button onClick={() => setDone((d) => ({ ...d, [i]: !d[i] }))} className="rb-btn w-full text-left flex gap-3 items-start">
-            <CheckBox checked={!!done[i]} />
-            <span
-              className="text-base leading-snug"
-              style={{ color: done[i] ? INK_FADE : INK, textDecoration: done[i] ? "line-through" : "none" }}
-            >
-              {t}
-            </span>
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="rb-display text-sm font-bold tracking-wide" style={{ color: finished ? GOLD : INK_FADE }}>
+          {finished ? "All set. Begin the war!" : `${done} of ${all.length} done`}
+        </span>
+        {done > 0 && (
+          <button onClick={() => update({ setupTicks: {} })} className="rb-btn text-xs underline underline-offset-2" style={{ color: INK_FADE }}>
+            clear ticks
           </button>
-        </li>
-      ))}
-    </ol>
+        )}
+      </div>
+      <div className="h-1.5 rounded-full mb-4" style={{ background: "rgba(43,32,20,0.12)" }}>
+        <div className="h-full rounded-full" style={{ width: `${(done / all.length) * 100}%`, background: GOLD, transition: "width .3s" }} />
+      </div>
+      {phases.map((ph, pi) => {
+        const phDone = ph.steps.every((st) => ticks[st.key]);
+        return (
+          <div key={ph.key} className="mb-4" data-phase={ph.key}>
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="rb-display text-xs font-bold tracking-[0.25em] uppercase" style={{ color: phDone ? GOLD : WAX }}>
+                {pi + 1}. {ph.title}
+              </span>
+              {ph.need.map((c) => (
+                <span key={c} className="rb-display text-xs font-bold px-2 py-0.5 rounded-sm" style={{ background: "rgba(43,32,20,0.08)", border: `1px solid ${LINE}`, color: INK }}>
+                  {c}
+                </span>
+              ))}
+            </div>
+            <ol className="space-y-1.5">
+              {ph.steps.map((st) => (
+                <li key={st.key}>
+                  <button onClick={() => toggle(st.key)} className="rb-btn w-full text-left flex gap-3 items-start py-1">
+                    <CheckBox checked={!!ticks[st.key]} />
+                    <span className="min-w-0" style={{ opacity: ticks[st.key] ? 0.55 : 1 }}>
+                      <span className="block text-base font-bold leading-snug" style={{ color: INK, textDecoration: ticks[st.key] ? "line-through" : "none" }}>
+                        {st.title}
+                      </span>
+                      <span className="block text-sm leading-snug" style={{ color: INK_FADE }}>{st.kid}</span>
+                    </span>
+                  </button>
+                  {st.show && !ticks[st.key] && (
+                    <button onClick={() => setShowSides(true)} className="rb-btn ml-10 mt-0.5 text-sm underline underline-offset-2" style={{ color: GOLD }}>
+                      Show me which lands are Good, Evil and Neutral
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        );
+      })}
+      {showSides && <SidesMap game={game} onClose={() => setShowSides(false)} />}
+    </div>
+  );
+}
+
+// The board tinted by card shield: Good lands, Evil lands, Neutral (no badge). Helps sort the deck.
+function SidesMap({ game, onClose }) {
+  const ps = game.players || [];
+  const goodP = ps.filter((p) => factionOf(p).side === "good");
+  const evilP = ps.filter((p) => factionOf(p).side === "evil");
+  const goodHex = goodP.length ? factionOf(goodP[0]).hex : "#b8923a";
+  const evilHex = evilP.length ? factionOf(evilP[0]).hex : "#33291f";
+  const ownerOf = (name) =>
+    GOOD_TERRITORIES.includes(name) ? { hex: goodHex, label: "Good" } : EVIL_TERRITORIES.includes(name) ? { hex: evilHex, label: "Evil" } : null;
+  const dot = (hex) => (
+    <span className="inline-block w-4 h-4 rounded-full mr-1.5" style={{ background: hex, border: "1.5px solid #fff6d5", boxShadow: "0 0 0 1px rgba(43,32,20,0.5)", verticalAlign: "-2px" }} />
+  );
+  const two = game.playerCount === 2;
+  return (
+    <div className="rb-backdrop" onClick={onClose}>
+      <div className="rb-modal rb-modal-map" onClick={(e) => e.stopPropagation()}>
+        <div className="md:flex md:gap-4 md:items-start">
+          <div className="text-center md:flex-1 md:min-w-0">
+            <BoardMap territories={game.territories} ownerOf={ownerOf} maxHeight="var(--map-max-h)" />
+          </div>
+          <div className="md:w-72 shrink-0 mt-3 md:mt-0 md:sticky md:top-0">
+            <div className="rb-display text-lg font-bold tracking-wide leading-tight" style={{ color: INK }}>
+              The three kinds of land
+            </div>
+            <div className="text-sm italic mt-0.5" style={{ color: INK_FADE }}>
+              Match the shield on each card to the map.
+            </div>
+            <ul className="mt-3 space-y-2 text-base" style={{ color: INK }}>
+              <li>
+                {dot(goodHex)}<b>Good shield</b> · 16 lands{two && goodP.length ? <> · <Name p={goodP[0]} />'s</> : " · the Free Peoples"}
+              </li>
+              <li>
+                {dot(evilHex)}<b>Evil shield</b> · 16 lands{two && evilP.length ? <> · <Name p={evilP[0]} />'s</> : " · Sauron's forces"}
+              </li>
+              <li>
+                <span className="inline-block w-3.5 h-3.5 rounded-full mr-1.5" style={{ border: "2px dashed rgba(43,32,20,0.6)", verticalAlign: "-2px" }} />
+                <b>Neutral</b> · 32 lands, no badge
+              </li>
+            </ul>
+            <div className="mt-3">
+              <BigButton tone="ink" onClick={onClose}>Done</BigButton>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1835,7 +2069,7 @@ function CombatWorkspace({ game, update, openPicker }) {
   const side = FACTIONS.find((f) => f.id === game.players[game.currentPlayer]?.faction)?.side || "good";
   return (
     <>
-      <BattlePanel side={side} />
+      <BattlePanel side={side} open={game.battlegroundOpen !== false} onToggle={() => update({ battlegroundOpen: game.battlegroundOpen === false })} />
       <Panel style={{ borderLeft: `4px solid ${GOLD}` }}>
         <div className="md:flex md:items-center md:justify-between md:gap-4">
           <div className="mb-2 md:mb-0">
@@ -2069,7 +2303,7 @@ function DiceEntry({ count, values, onPick, tone }) {
   );
 }
 
-function BattlePanel({ side }) {
+function BattlePanel({ side, open = true, onToggle }) {
   const [attCount, setAttCount] = useState(3);
   const [defCount, setDefCount] = useState(2);
   const [att, setAtt] = useState([0, 0, 0]);
@@ -2132,10 +2366,24 @@ function BattlePanel({ side }) {
   return (
     <>
       <Panel>
-        <PanelTitle sub="Roll your real dice, then tap what they show. The book sorts them, adds every bonus, and gives ties to the defender.">
-          The battleground
-        </PanelTitle>
+        <button onClick={onToggle} className="rb-btn w-full text-left flex items-start justify-between gap-3" aria-expanded={open} data-battleground-toggle>
+          <div className={open ? "mb-3" : ""}>
+            <h2 className="rb-display text-base font-bold tracking-widest uppercase" style={{ color: INK }}>
+              The battleground
+            </h2>
+            <p className="text-sm italic mt-0.5" style={{ color: INK_FADE }}>
+              {open
+                ? "Roll your real dice, then tap what they show. The book sorts them, adds every bonus, and gives ties to the defender."
+                : "Folded away. Fight with real dice at the table, or tap here to open the book's dice."}
+            </p>
+          </div>
+          <span className="rb-display text-lg font-bold shrink-0" style={{ color: INK_FADE }}>
+            {open ? "▾" : "▸"}
+          </span>
+        </button>
 
+        {open && (
+          <>
         <div className="md:grid md:grid-cols-2 md:gap-5">
           <div className="mb-4 md:mb-0">
             <div className="rb-display text-base font-bold tracking-wide mb-1" style={{ color: WAX }}>
@@ -2207,6 +2455,8 @@ function BattlePanel({ side }) {
             clear
           </button>
         </div>
+          </>
+        )}
       </Panel>
 
       {stage && <BattleStage plan={stage} onDone={finishFight} />}
